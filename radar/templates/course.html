@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_item.html" import card, section with context %}
+{% block title %}Radar · {{ c.name }}{% endblock %}
+{% block body %}
+<h1 style="--c:{{ colors.get(c.id, '#898781') }}"><i class="chip big" style="background:{{ colors.get(c.id, '#898781') }}"></i>{{ c.name }}
+  <span class="muted small">{{ c.code }}{% if c.term %} · {{ c.term }}{% endif %}{% if c.current_score is not none %} · <b>{{ c.current_score }}%{% if c.current_grade %} ({{ c.current_grade }}){% endif %}</b>{% endif %}
+  · <a href="{{ c.url }}" target="_blank" rel="noopener">open in Canvas ↗</a></span></h1>
+{% if c.teachers %}<p class="muted">Taught by {{ c.teachers|join(', ') }}</p>{% endif %}
+
+<div class="cols">
+<div class="col-main">
+  {{ section('Open tasks', g.tasks, '', True, 'No open tasks in this course.', False) }}
+  {{ section('Dates from the syllabus', g.syllabus, '', True, 'No dated lines found in the syllabus (or no syllabus posted).', False, True) }}
+  {{ section('Announcements', g.announcements, 'info', True, 'No announcements in the lookback window.', False) }}
+  {{ section('Other (events, discussions, module requirements)', g.other, '', False, 'Nothing else.', False, True) }}
+  {{ section('Submitted / graded', g.graded, '', False, 'Nothing graded yet.', False, True) }}
+  {{ section('Recent files', g.files, '', False, 'No recent files.', False, True) }}
+</div>
+<aside class="col-side">
+  {% set ai = c.syllabus_ai %}
+  <details class="section" open>
+    <summary><span>Syllabus digest</span><span class="count">{{ 'AI' if ai else ('regex' if c.syllabus_text else '–') }}</span></summary>
+    {% if ai %}
+      {% if ai.weekly_schedule %}<h4>Weekly schedule</h4><ul class="plain">{% for w in ai.weekly_schedule %}<li><b>{{ w.what }}</b> · {{ w.days }}{% if w.time %} {{ w.time }}{% endif %}{% if w.location %} · {{ w.location }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+      {% if ai.exams %}<h4>Exams</h4><ul class="plain">{% for e in ai.exams %}<li><b>{{ e.name }}</b> · {{ e.date or 'date TBA' }}{% if e.time %} {{ e.time }}{% endif %}{% if e.location %} · {{ e.location }}{% endif %}{% if e.notes %} <span class="muted">{{ e.notes }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+      {% if ai.policies %}<h4>Policies</h4><ul class="plain">
+        {% if ai.policies.late_work %}<li><b>Late work:</b> {{ ai.policies.late_work }}</li>{% endif %}
+        {% if ai.policies.attendance %}<li><b>Attendance:</b> {{ ai.policies.attendance }}</li>{% endif %}
+        {% if ai.policies.grading %}<li><b>Grading:</b> {{ ai.policies.grading }}</li>{% endif %}
+        {% if ai.policies.contact %}<li><b>Contact:</b> {{ ai.policies.contact }}</li>{% endif %}</ul>{% endif %}
+      {% if ai.key_facts %}<h4>Key facts</h4><ul class="plain">{% for k in ai.key_facts %}<li>{{ k }}</li>{% endfor %}</ul>{% endif %}
+    {% elif c.syllabus_text %}
+      <p class="muted small">AI extraction is off, so only dated lines are pulled out (left). Enable AI (ANTHROPIC_API_KEY) for exams, policies and the weekly schedule.</p>
+      <details><summary class="muted small">raw syllabus text</summary><pre class="raw">{{ c.syllabus_text[:6000] }}</pre></details>
+    {% else %}
+      <p class="muted small">No syllabus page or file found for this course.</p>
+    {% endif %}
+    <p class="small"><a href="{{ c.url }}/assignments/syllabus" target="_blank" rel="noopener">Syllabus in Canvas ↗</a></p>
+  </details>
+  <details class="section" open>
+    <summary><span>Sites &amp; tools</span><span class="count">{{ sites|length }}</span></summary>
+    {% for s in sites %}<div class="siterow"><a href="{{ url_for('site_open', site_id=s.id) }}" target="_blank" rel="noopener">{{ s.name }}</a>{% if s.platform %} <span class="badge platform">{{ s.platform }}</span>{% endif %}<div class="muted small">{{ s.where_found }}{% if s.last_checked_dt %} · opened {{ s.last_checked_dt|ago }}{% endif %}</div></div>{% else %}<p class="muted empty">None found.</p>{% endfor %}
+  </details>
+</aside>
+</div>
+{% endblock %}

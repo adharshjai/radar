@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Radar · Calendar{% endblock %}
+{% block body %}
+<h1>Next {{ days }} days <span class="muted small">· <a href="?days=14">14</a> · <a href="?days=30">30</a> · <a href="?days=60">60</a> · <a href="?days=120">120</a></span></h1>
+<div class="cal">
+{% for day in grid %}
+  <div class="cal-day {{ 'today' if day.is_today }} {{ 'weekend' if day.weekend }} {{ 'empty' if not day['items'] }}">
+    <div class="cal-head"><b>{{ day.date.strftime('%a') }}</b> {{ day.date.strftime('%b %-d') }}{% if day.is_today %} <span class="badge info">today</span>{% endif %}</div>
+    {% for it in day['items'] %}
+      {% set when = it.starts_at or it.due_at %}
+      <div class="cal-item" style="--c:{{ colors.get(it.course_id, '#898781') }}">
+        <span class="t">{{ 'all day' if (it.extra or {}).all_day else when|local('%-I:%M %p') }}</span>
+        <span class="icon" title="{{ it.kind_label }}">{{ it.icon }}</span>
+        {% if it.url %}<a href="{{ it.url }}" target="_blank" rel="noopener">{{ it.title }}</a>{% else %}{{ it.title }}{% endif %}
+        {% if it.course %}<span class="muted">· {{ it.course }}</span>{% endif %}
+        {% if it.platform %}<span class="badge platform">{{ it.platform }}</span>{% endif %}
+        {% if it.status in ('missing','pastdue') %}<span class="badge crit">{{ it.status_label }}</span>{% endif %}
+        {% if (it.extra or {}).location %}<span class="muted">@ {{ it.extra.location }}</span>{% endif %}
+      </div>
+    {% endfor %}
+  </div>
+{% endfor %}
+</div>
+{% endblock %}

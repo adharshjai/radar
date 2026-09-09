@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "_item.html" import card with context %}
+{% block title %}Radar · Inbox{% endblock %}
+{% block body %}
+<h1>Inbox <span class="muted small">Outlook + Canvas inbox + announcements</span>
+  <span class="muted small right">{% if show_all %}<a href="{{ url_for('inbox') }}">hide noise</a>{% else %}<a href="{{ url_for('inbox', all=1) }}">show everything</a>{% endif %}</span></h1>
+{% if not mail %}<p class="muted empty">No mail synced yet. Connect Outlook with <code>python3 -m radar login outlook</code> or enable Apple Mail in the config.</p>{% endif %}
+{% for it in mail %}
+  {% set ex = it.extra or {} %}
+  {% set ai = it.ai or {} %}
+  <div class="mailrow {{ 'muted-row' if (ai.relevant is sameas false) or ex.bulk }}">
+    {{ card(it) }}
+    {% if ai or it.kind == 'email' %}<div class="mailmeta muted small">
+      {% if ai %}{{ ai.category }} · urgency {{ ai.urgency }}{% if ai.action_required %} · <b>action</b>{% endif %}
+      {% else %}relevance {{ ex.relevance }}{% if ex.reasons %} · {{ ex.reasons|join(', ') }}{% endif %}{% if ex.action_required %} · <b>action?</b>{% endif %}{% endif %}
+      {% if ex.canvas_notification %} · Canvas notification{% endif %}{% if ex.dup_of %} · duplicate{% endif %}{% if ex.focused is sameas false %} · "Other" tab{% endif %}
+    </div>{% endif %}
+  </div>
+{% endfor %}
+{% endblock %}

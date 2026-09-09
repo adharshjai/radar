@@ -1,0 +1,7 @@
+requests>=2.31
+flask>=3.0
+msal>=1.28
+pypdf>=4.0
+browser-cookie3>=0.20.1,<0.21
+anthropic>=1.0
+pytest>=8

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "radar"
+version = "0.1.0"
+description = "Everything due, from Canvas + syllabi + Outlook, in one daily dashboard."
+requires-python = ">=3.11"
+dependencies = ["requests>=2.31", "flask>=3.0", "msal>=1.28", "pypdf>=4.0", "browser-cookie3>=0.20.1,<0.21"]
+
+[project.optional-dependencies]
+ai = ["anthropic>=1.0"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+radar = "radar.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["radar*"]
+
+[tool.setuptools.package-data]
+radar = ["templates/*.html", "static/*"]

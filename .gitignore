@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+demo/home/
+demo/screenshot-*.png
+.claude/
+RadarApp/.build/
+RadarApp/.swiftpm/
+engine-build/
+*.spec.bak
+.DS_Store

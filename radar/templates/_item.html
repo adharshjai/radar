@@ -1,0 +1,65 @@
+{% macro card(it, show_course=True, compact=False) -%}
+{% set ex = it.extra or {} %}
+{% set ai = it.ai or {} %}
+<article class="card kind-{{ it.kind }} {{ 'compact' if compact }}" data-uid="{{ it.uid }}" data-site-ids="{{ (ex.site_ids or [])|join(',') }}" style="--c:{{ colors.get(it.course_id, '#898781') }}">
+  <div class="card-main">
+    <div class="line1">
+      <span class="icon" title="{{ it.kind_label }}">{{ it.icon }}</span>
+      {% if it.url %}<a class="title" href="{{ it.url }}" target="_blank" rel="noopener">{{ it.title }}</a>{% else %}<span class="title">{{ it.title }}</span>{% endif %}
+      {% if it.platform %}<span class="badge platform">{{ it.platform }}</span>{% endif %}
+      {% if it.is_new %}<span class="badge new">new</span>{% elif it.is_updated %}<span class="badge upd" title="changed since your last visit{% if it.prev_due_at %} (was {{ it.prev_due_at|local }}){% endif %}">updated</span>{% endif %}
+      {% if it.status in ('missing','pastdue') %}<span class="badge crit">{{ it.status_label }}</span>
+      {% elif it.status == 'locked' %}<span class="badge muted-b">locked</span>
+      {% elif it.status == 'unread' %}<span class="badge info">unread</span>
+      {% elif it.status_label %}<span class="badge muted-b">{{ it.status_label }}</span>{% endif %}
+      {% if ex.hint == 'exam' %}<span class="badge exam">exam</span>{% endif %}
+      {% if ex.late %}<span class="badge warn">late</span>{% endif %}
+    </div>
+    <div class="line2 muted">
+      {% if show_course and it.course %}<a class="course" href="{{ url_for('course', course_id=it.course_id) if it.course_id else '#' }}"><i class="chip" style="background:{{ colors.get(it.course_id, '#898781') }}"></i>{{ it.course }}</a>{% endif %}
+      {% if it.due_text %}<span class="due {{ 'over' if (it.due_at and it.due_at < now and not ex.all_day) }}">{{ it.due_text }}</span>{% endif %}
+      {% if it.points %}<span>{{ it.points|int if it.points == it.points|int else it.points }} pts</span>{% endif %}
+      {% if it.score is not none and it.points %}<span>{{ it.score|round(1) }}/{{ it.points|round(1) }}</span>{% elif it.grade %}<span>{{ it.grade }}</span>{% endif %}
+      {% if it.sender %}<span>from {{ it.sender }}</span>{% endif %}
+      {% if it.ago and it.kind in ('announcement','email','conversation','file','discussion') %}<span>{{ it.ago }}</span>{% endif %}
+      {% if it.kind == 'syllabus_event' %}<span>{{ 'from syllabus (AI)' if ex.get('from') == 'syllabus-ai' else 'from syllabus' }}</span>{% endif %}
+      {% if ex.location %}<span>@ {{ ex.location }}</span>{% endif %}
+      {% if it.kind not in ('assignment','quiz','syllabus_event') %}<span class="kind">{{ it.kind_label }}</span>{% endif %}
+    </div>
+    {% if not compact %}
+      {% if ai.summary %}<p class="summary">{{ ai.summary }}</p>
+      {% elif it.body and it.body != it.title and it.kind in ('announcement','email','conversation','discussion','syllabus_event','planner_note','calendar','event','manual') %}<p class="summary">{{ it.body|snippet }}</p>{% endif %}
+      {% if ai.action_items %}<ul class="actions">{% for a in ai.action_items %}<li>{{ a.text }}{% if a.due %} <b>by {{ a.due }}</b>{% endif %}</li>{% endfor %}</ul>
+      {% elif it.kind == 'email' and ex.mentioned_dates %}<div class="muted small">mentions {{ ex.mentioned_dates|join(', ') }}{% if ex.action_words %} · {{ ex.action_words|join(', ') }}{% endif %}</div>{% endif %}
+      {% if it.note %}<div class="note">📝 {{ it.note }}</div>{% endif %}
+    {% endif %}
+  </div>
+  <div class="card-actions">
+    {% if it.kind == 'site_check' %}
+      <a class="btn" href="{{ it.url }}" target="_blank" rel="noopener">Open ↗</a>
+      <button class="btn" data-act="done" title="Mark checked">✓</button>
+    {% elif it.user_state == 'done' %}
+      <button class="btn" data-act="reopen">Reopen</button>
+    {% else %}
+      {% if it.url %}<a class="btn" href="{{ it.url }}" target="_blank" rel="noopener">Open ↗</a>{% endif %}
+      <button class="btn" data-act="done" title="Mark done / hide">✓</button>
+      <span class="snooze-wrap"><button class="btn" data-act="snooze-menu" title="Snooze">⏰</button>
+        <span class="snooze-menu" hidden>
+          <button data-act="snooze" data-hours="4">4 hours</button>
+          <button data-act="snooze" data-hours="24">Tomorrow</button>
+          <button data-act="snooze" data-hours="72">3 days</button>
+          {% if it.due_at %}<button data-act="snooze" data-until="due">Day before due</button>{% endif %}
+        </span></span>
+      <button class="btn" data-act="note" title="Add note">📝</button>
+      {% if it.kind == 'manual' %}<button class="btn" data-act="delete" title="Delete">🗑</button>{% endif %}
+    {% endif %}
+  </div>
+</article>
+{%- endmacro %}
+
+{% macro section(title, items, cls='', open=True, empty='Nothing here.', show_course=True, compact=False) -%}
+<details class="section {{ cls }}" {{ 'open' if open }}>
+  <summary><span>{{ title }}</span><span class="count">{{ items|length }}</span></summary>
+  {% if items %}{% for it in items %}{{ card(it, show_course, compact) }}{% endfor %}{% else %}<p class="muted empty">{{ empty }}</p>{% endif %}
+</details>
+{%- endmacro %}

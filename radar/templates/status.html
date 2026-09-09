@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Radar · Status{% endblock %}
+{% block body %}
+<h1>Status</h1>
+<div class="cols">
+<div class="col-main">
+  <h3>Sync history</h3>
+  <table class="log">
+  {% for s in syncs %}<tr class="{{ 'ok' if s.ok else 'bad' }}"><td>{{ s.finished|local }}</td><td>{{ s.source }}</td><td>{{ '✓' if s.ok else '✗' }}</td><td class="small">{{ s.message or s.counts }}</td></tr>{% else %}<tr><td class="muted">No syncs yet.</td></tr>{% endfor %}
+  </table>
+  <h3>Live sync log</h3>
+  <pre id="live-log" class="raw">{{ sync_state.log|join('\n') }}</pre>
+</div>
+<aside class="col-side">
+  <h3>Setup</h3>
+  <ul class="plain">
+    <li>Config: <code>{{ cfg_path }}</code></li>
+    <li>Database: <code>{{ db_path }}</code></li>
+    <li>Canvas: {{ cfg.canvas.base_url or '<i>not configured</i>'|safe }}</li>
+    <li>Outlook (Graph): {{ 'enabled' if cfg.outlook.enabled else 'off' }}</li>
+    <li>Apple Mail: {{ 'enabled' if cfg.applemail.enabled else 'off' }}</li>
+    <li>AI enrichment: {{ 'on' if cfg.ai.enabled else 'off' }} ({{ cfg.ai.model }})</li>
+    <li>Auto-sync every {{ cfg.server.sync_every_minutes }} min</li>
+    <li>Items stored: {{ d['items']|length }} · sites: {{ d.sites|length }} · courses: {{ courses|length }}</li>
+  </ul>
+  <p class="muted small">Edit the config file and restart <code>python3 -m radar serve</code> to change any of this.</p>
+</aside>
+</div>
+{% endblock %}

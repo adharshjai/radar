@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Radar{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='44' fill='%232a78d6'/><circle cx='50' cy='50' r='26' fill='none' stroke='white' stroke-width='6'/><circle cx='50' cy='50' r='8' fill='white'/></svg>">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="{{ url_for('today') }}"><span class="dot"></span>Radar</a>
+  <nav>
+    <a href="{{ url_for('today') }}" class="{{ 'on' if page=='today' }}">Today</a>
+    <a href="{{ url_for('calendar') }}" class="{{ 'on' if page=='calendar' }}">Calendar</a>
+    <a href="{{ url_for('inbox') }}" class="{{ 'on' if page=='inbox' }}">Inbox</a>
+    <a href="{{ url_for('sites') }}" class="{{ 'on' if page=='sites' }}">Sites</a>
+    <span class="menu"><a href="#" class="{{ 'on' if page=='course' }}">Courses ▾</a>
+      <div class="dropdown">
+        {% for c in courses %}<a href="{{ url_for('course', course_id=c.id) }}"><i class="chip" style="background:{{ colors[c.id] }}"></i>{{ c.name }}</a>{% else %}<span class="muted">No courses yet</span>{% endfor %}
+      </div>
+    </span>
+    <a href="{{ url_for('all_items') }}" class="{{ 'on' if page=='all' }}">All</a>
+    <a href="{{ url_for('status_page') }}" class="{{ 'on' if page=='status' }}">Status</a>
+  </nav>
+  <div class="sync">
+    {% if demo %}<span class="pill demo">demo data</span>{% endif %}
+    <span id="sync-info" class="muted">{% if last_sync %}synced {{ last_sync|ago }}{% else %}never synced{% endif %}</span>
+    <button id="sync-btn" {% if demo %}disabled{% endif %}>{{ 'Syncing…' if sync_state.syncing else 'Sync now' }}</button>
+  </div>
+</header>
+<main>
+{% for pr in problems %}
+<div class="callout problem"><b>{{ pr.source }} sync failed{% if pr.when %} {{ pr.when|ago }}{% endif %}:</b> {{ pr.message|truncate(220) }}
+  {% if pr.fix %}<div class="small"><code>{{ pr.fix }}</code></div>{% endif %}</div>
+{% endfor %}
+{% block body %}{% endblock %}
+</main>
+<div id="sync-log" hidden><pre></pre></div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% from "_item.html" import card with context %}
+{% block title %}Radar · Everything{% endblock %}
+{% block body %}
+<h1>Everything <span class="muted small">{{ items|length }} shown</span></h1>
+<form class="search" method="get">
+  <input name="q" value="{{ q }}" placeholder="Search titles, bodies, courses…">
+  <select name="kind"><option value="">all kinds</option>{% for k in kinds %}<option value="{{ k }}" {{ 'selected' if k == kind }}>{{ kind_labels.get(k, k) }}</option>{% endfor %}</select>
+  <button class="btn">Search</button>
+</form>
+{% for it in items %}{{ card(it, True, True) }}{% else %}<p class="muted empty">Nothing matches.</p>{% endfor %}
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_item.html" import card, section with context %}
+{% block title %}Radar · Today{% endblock %}
+{% block body %}
+{% set s = d.stats %}
+<section class="stats">
+  <div class="stat {{ 'crit' if s.overdue }}"><b>{{ s.overdue }}</b><span>overdue</span></div>
+  <div class="stat {{ 'warn' if s.today }}"><b>{{ s.today }}</b><span>due today</span></div>
+  <div class="stat"><b>{{ s.tomorrow }}</b><span>tomorrow</span></div>
+  <div class="stat"><b>{{ s.week }}</b><span>this week</span></div>
+  <div class="stat"><b>{{ s.new }}</b><span>new</span></div>
+  <div class="stat"><b>{{ s.unread_mail }}</b><span>unread mail</span></div>
+  <div class="workload" aria-label="tasks due per day, next 14 days">
+    {% set mx = d.workload|map(attribute='count')|max or 1 %}
+    {% for w in d.workload %}
+      <div class="bar-col" title="{{ w.date.strftime('%a %b %-d') }}: {{ w.count }} due{% if w.titles %} — {{ w.titles|join('; ') }}{% endif %}">
+        <span class="val">{{ w.count if w.count else '' }}</span>
+        <i style="height:{{ (w.count / mx * 100)|round if w.count else 0 }}%"></i>
+        <span class="lbl {{ 'today' if loop.first }}">{{ w.label }}</span>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+
+<div class="filters">
+  <a href="{{ url_for('today') }}" class="chipbtn {{ 'on' if not course_filter }}">All courses</a>
+  {% for c in courses %}<a href="{{ url_for('today', course=c.id) }}" class="chipbtn {{ 'on' if course_filter == c.id }}"><i class="chip" style="background:{{ colors[c.id] }}"></i>{{ c.code or c.name }}</a>{% endfor %}
+  <form id="add-task" class="add-task">
+    <input name="title" placeholder="Add my own task…" required>
+    <input name="due" type="datetime-local">
+    <select name="course_id"><option value="">no course</option>{% for c in courses %}<option value="{{ c.id }}">{{ c.code or c.name }}</option>{% endfor %}</select>
+    <button class="btn">Add</button>
+  </form>
+</div>
+
+{% if not courses and not demo %}
+<div class="callout">
+  <b>Nothing synced yet.</b> Run <code>python3 -m radar setup</code> in a terminal to connect Canvas (and Outlook), then press <b>Sync now</b>.
+</div>
+{% endif %}
+
+<div class="cols">
+<div class="col-main">
+  {{ section('Overdue / missing', d.buckets.overdue, 'crit', True, 'Nothing overdue. 🎉') }}
+  {{ section('Due today', d.buckets.today, 'warn', True, 'Nothing due today.') }}
+  {{ section('Due tomorrow', d.buckets.tomorrow, '', True, 'Nothing due tomorrow.') }}
+  {{ section('This week', d.buckets.week, '', True, 'Nothing else due this week.') }}
+  {{ section('No date yet · sites to check', d.buckets.nodate, '', True, 'Nothing pending without a date.') }}
+  {{ section('Later', d.buckets.later, '', False, 'Nothing scheduled further out.', True, True) }}
+  {{ section('Snoozed', d.snoozed, '', False, 'Nothing snoozed.', True, True) }}
+  {{ section('Done recently', d.done_recent, '', False, 'Nothing marked done yet.', True, True) }}
+</div>
+<aside class="col-side">
+  {{ section('New since your last look', d.new_info, 'info', True, 'Nothing new. ✅') }}
+  {% if d.graded %}{{ section('Recently graded', d.graded, '', True, '', True, True) }}{% endif %}
+  <details class="section" open>
+    <summary><span>Next 7 days</span><span class="count">{{ d.agenda|map(attribute='items')|map('length')|sum }}</span></summary>
+    {% for day in d.agenda %}{% if day['items'] %}
+      <div class="agenda-day"><b>{{ day.label }}</b> <span class="muted">{{ day.sub }}</span>
+        <ul>{% for it in day['items'] %}
+          {% set when = it.starts_at or it.due_at %}
+          <li><span class="t">{{ 'all day' if (it.extra or {}).all_day else when|local('%-I:%M %p') }}</span>
+            <span class="icon">{{ it.icon }}</span>
+            {% if it.url %}<a href="{{ it.url }}" target="_blank" rel="noopener">{{ it.title }}</a>{% else %}{{ it.title }}{% endif %}
+            {% if it.course %}<i class="chip" style="background:{{ colors.get(it.course_id, '#898781') }}" title="{{ it.course }}"></i>{% endif %}
+          </li>{% endfor %}</ul>
+      </div>
+    {% endif %}{% endfor %}
+    {% if not (d.agenda|map(attribute='items')|map('length')|sum) %}<p class="muted empty">Nothing on the calendar this week.</p>{% endif %}
+    <p class="muted small"><a href="{{ url_for('calendar') }}">Full calendar →</a> · <a href="{{ url_for('brief') }}" target="_blank">Text brief →</a></p>
+  </details>
+</aside>
+</div>
+{% endblock %}
+{% block scripts %}<script>radarVisited();</script>{% endblock %}

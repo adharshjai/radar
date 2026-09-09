@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Radar · Sites{% endblock %}
+{% block body %}
+<h1>External sites &amp; tools <span class="muted small">everything linked from your courses (LabFlow, Gradescope, lab manuals, forms…)</span></h1>
+<p class="muted">Radar can't see inside these platforms, so it reminds you to open them. Opening a site from here records the visit; set how often you want a reminder.</p>
+{% if not by_course %}<p class="muted empty">No external links discovered yet. Sync Canvas first.</p>{% endif %}
+{% for cid, sites in by_course.items() %}
+  {% set c = course_map.get(cid) %}
+  <section class="sitegroup" style="--c:{{ colors.get(cid, '#898781') }}">
+    <h2><i class="chip" style="background:{{ colors.get(cid, '#898781') }}"></i>{{ c.name if c else cid }}</h2>
+    {% for cat, label in [('tool','Tools & platforms'), ('link','Links'), ('media','Video / meetings')] %}
+      {% set group = sites|selectattr('category','equalto',cat)|list %}
+      {% if group %}
+      <h3 class="muted">{{ label }}</h3>
+      <table class="sites">
+      {% for s in group %}
+        <tr data-site="{{ s.id }}">
+          <td class="name"><a href="{{ url_for('site_open', site_id=s.id) }}" target="_blank" rel="noopener">{{ s.name }}</a>
+            {% if s.platform %}<span class="badge platform">{{ s.platform }}</span>{% endif %}
+            <div class="muted small">{{ s.url|truncate(90) }} · found in {{ s.where_found }}</div></td>
+          <td class="muted small">{% if s.last_checked_dt %}opened {{ s.last_checked_dt|ago }}{% else %}never opened{% endif %}</td>
+          <td><label class="muted small">remind every
+            <select data-every="{{ s.id }}">
+              {% for n, l in [(0,'never'),(1,'day'),(2,'2 days'),(3,'3 days'),(7,'week'),(14,'2 weeks')] %}<option value="{{ n }}" {{ 'selected' if s.check_every_days == n }}>{{ l }}</option>{% endfor %}
+            </select></label></td>
+          <td><button class="btn" data-site-check="{{ s.id }}" title="Mark as checked now">✓</button>
+              <button class="btn" data-site-hide="{{ s.id }}" title="Hide this link">✕</button></td>
+        </tr>
+      {% endfor %}
+      </table>
+      {% endif %}
+    {% endfor %}
+  </section>
+{% endfor %}
+{% endblock %}
