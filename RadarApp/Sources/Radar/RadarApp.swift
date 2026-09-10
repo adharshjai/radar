@@ -12,8 +12,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationWillTerminate(_ notification: Notification) { state?.shutdown() }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil) }
-        return true
+        if let w = NSApp.windows.first(where: { $0.canBecomeMain && !$0.isMiniaturized && $0.isVisible == false && $0.title != "" }) {
+            w.makeKeyAndOrderFront(nil)
+            return false
+        }
+        return true          // no main window left: SwiftUI creates a fresh one
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .sound, .badge]
@@ -32,10 +35,10 @@ struct RadarApp: App {
     @State private var state = AppState()
 
     var body: some Scene {
-        WindowGroup("Radar") {
+        WindowGroup("Radar", id: "main") {
             ContentView()
                 .environment(state)
-                .frame(minWidth: 900, minHeight: 560)
+                .frame(minWidth: 1080, minHeight: 600)
                 .onAppear {
                     delegate.state = state
                     if !state.engineReady, state.engineError == nil { state.boot() }

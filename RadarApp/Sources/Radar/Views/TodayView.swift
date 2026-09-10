@@ -2,10 +2,29 @@ import SwiftUI
 
 struct TodayView: View {
     @Environment(AppState.self) private var state
-    @State private var courseFilter: String? = nil
 
     private var d: Dashboard { state.dashboard }
+    private var courseFilter: String? { state.courseFilter }
     private func f(_ items: [Item]) -> [Item] { courseFilter == nil ? items : items.filter { $0.course_id == courseFilter } }
+
+    /// Header numbers follow the course filter too.
+    private var stats: Stats {
+        guard courseFilter != nil else { return d.stats }
+        let b = d.buckets
+        return Stats(overdue: f(b.overdue).count, today: f(b.today).count, tomorrow: f(b.tomorrow).count, week: f(b.week).count,
+                     new: f(d.new_info).count, unread_mail: d.stats.unread_mail, checks: d.stats.checks, tasks: f(b.all).count)
+    }
+    private var workload: [WorkloadDay] {
+        guard courseFilter != nil else { return d.workload }
+        let tasks = f(d.buckets.all)
+        return d.workload.map { day in
+            let due = tasks.filter { t in t.dueDate.map { ISO8601DateFormatter.dateOnly.string(from: $0) == day.date } ?? false }
+            return WorkloadDay(date: day.date, label: day.label, count: due.count, titles: due.prefix(6).map(\.title))
+        }
+    }
+    private var agendaDays: [AgendaDay] {
+        courseFilter == nil ? d.agenda : d.agenda.map { AgendaDay(date: $0.date, label: $0.label, sub: $0.sub, items: f($0.items)) }
+    }
 
     var body: some View {
         ScrollView {
@@ -32,7 +51,7 @@ struct TodayView: View {
                         }
                         agenda
                     }
-                    .frame(width: 400)
+                    .frame(minWidth: 320, idealWidth: 400, maxWidth: 440)
                 }
             }
             .padding(16)
@@ -43,29 +62,24 @@ struct TodayView: View {
     }
 
     private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) { tiles; WorkloadChart(days: d.workload) }
-            VStack(alignment: .leading, spacing: 10) { tiles; WorkloadChart(days: d.workload) }
-        }
-    }
-
-    private var tiles: some View {
-        HStack(spacing: 10) {
-            StatTile(value: d.stats.overdue, label: "overdue", tint: d.stats.overdue > 0 ? Palette.critical : nil)
-            StatTile(value: d.stats.today, label: "due today", tint: d.stats.today > 0 ? Palette.warning : nil)
-            StatTile(value: d.stats.tomorrow, label: "tomorrow")
-            StatTile(value: d.stats.week, label: "this week")
-            StatTile(value: d.stats.new, label: "new")
-            StatTile(value: d.stats.unread_mail, label: "unread mail")
+        FlowLayout(spacing: 10, rowSpacing: 10) {
+            let s = stats
+            StatTile(value: s.overdue, label: "overdue", tint: s.overdue > 0 ? Palette.critical : nil)
+            StatTile(value: s.today, label: "due today", tint: s.today > 0 ? Palette.warning : nil)
+            StatTile(value: s.tomorrow, label: "tomorrow")
+            StatTile(value: s.week, label: "this week")
+            StatTile(value: s.new, label: "new")
+            StatTile(value: s.unread_mail, label: "unread mail")
+            WorkloadChart(days: workload)
         }
     }
 
     private var filters: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                chip("All courses", color: nil, selected: courseFilter == nil) { courseFilter = nil }
+                chip("All courses", color: nil, selected: courseFilter == nil) { state.courseFilter = nil }
                 ForEach(d.courses) { c in
-                    chip(c.shortName, color: state.courseColors[c.id], selected: courseFilter == c.id) { courseFilter = courseFilter == c.id ? nil : c.id }
+                    chip(c.shortName, color: state.courseColors[c.id], selected: courseFilter == c.id) { state.courseFilter = courseFilter == c.id ? nil : c.id }
                 }
             }
         }
@@ -90,7 +104,7 @@ struct TodayView: View {
     }
 
     private var agenda: some View {
-        let days = d.agenda.filter { !$0.items.isEmpty }
+        let days = agendaDays.filter { !$0.items.isEmpty }
         let total = days.reduce(0) { $0 + $1.items.count }
         return SectionBox(title: "Next 7 days", count: total, emptyText: "Nothing on the calendar this week.") {
             VStack(alignment: .leading, spacing: 8) {

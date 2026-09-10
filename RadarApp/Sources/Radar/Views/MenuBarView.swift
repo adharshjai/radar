@@ -23,7 +23,7 @@ struct MenuBarView: View {
                             Circle().fill(it.course_id.flatMap { state.courseColors[$0] } ?? .gray).frame(width: 7, height: 7)
                             Button { state.open(it) } label: { Text(it.title).lineLimit(1) }.buttonStyle(.plain)
                             Spacer()
-                            Text(it.due_text ?? "").font(.caption).foregroundStyle(it.isOverdue ? Palette.critical : .secondary)
+                            Text(it.due_text ?? "").font(.caption).foregroundStyle(it.isOverdue && it.status != "graded" ? Palette.critical : .secondary)
                             Button { state.markDone(it) } label: { Image(systemName: "checkmark") }.buttonStyle(.borderless).controlSize(.small).help("Done")
                         }
                     }
@@ -31,7 +31,11 @@ struct MenuBarView: View {
             }
             Divider()
             HStack {
-                Button("Open Radar") { NSApp.activate(ignoringOtherApps: true); NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil) }
+                Button("Open Radar") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.identifier?.rawValue.hasPrefix("main") == true }) { w.makeKeyAndOrderFront(nil) }
+                    else { openWindow(id: "main") }
+                }
                 Button(state.syncing ? "Syncing…" : "Sync now") { state.sync() }.disabled(state.syncing || state.isDemo)
                 Spacer()
                 Text(state.isDemo ? "demo" : (d.last_sync.map { Fmt.relative($0) } ?? "")).font(.caption).foregroundStyle(.secondary)

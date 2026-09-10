@@ -295,7 +295,9 @@ def run_sync(cfg: dict | None = None, store: Store | None = None, sources: list[
             results["ai"] = {"ok": False, "error": str(e)}
             log(f"AI triage failed: {e}")
 
-    store.set_meta("last_sync", now.isoformat())
+    ran = any(isinstance(v, dict) and v.get("error") != "not configured" for k, v in results.items() if k != "ai")
+    if ran:
+        store.set_meta("last_sync", now.isoformat())
     if notify:
         notify_new(store, cfg, now)
     return results

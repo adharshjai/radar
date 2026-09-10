@@ -32,8 +32,20 @@ def test_token_required(client):
     bare = client.application.test_client()
     assert bare.get("/api/dashboard").status_code == 401
     assert bare.get("/").status_code == 401                                   # HTML routes are guarded in app mode too
-    assert bare.get("/api/dashboard?token=" + TOKEN).status_code == 200
+    assert bare.post("/api/sync").status_code == 401                          # app-level routes too, not only the blueprint
+    assert bare.post("/api/item/x/state", json={"action": "done"}).status_code == 401
     assert bare.get("/static/style.css").status_code == 200
+    # a ?token= visit moves the secret into an HttpOnly cookie and redirects to a clean URL
+    r = bare.get("/?token=" + TOKEN + "&course=1001")
+    assert r.status_code == 303 and r.headers["Location"].endswith("/?course=1001")
+    assert "radar_token=" in r.headers.get("Set-Cookie", "") and "HttpOnly" in r.headers["Set-Cookie"]
+    assert bare.get("/calendar").status_code == 200                           # cookie now carries the token
+
+
+def test_cross_site_posts_are_rejected(client):
+    assert client.post("/api/sync", headers={"Origin": "http://evil.example"}).status_code == 403
+    assert client.post("/api/sync", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+    assert client.post("/visited", headers={"Origin": "http://localhost"}).status_code == 200
 
 
 def test_dashboard_shape(client):
@@ -77,21 +89,46 @@ def test_config_roundtrip(client):
     c = client.get("/api/config").get_json()
     assert c["canvas"]["has_token"] is False and c["ai"]["has_key"] in (True, False)
     r = client.put("/api/config", json={"canvas": {"ics_url": "https://x/feeds/calendars/user_a.ics", "announcement_feeds": "https://x/a.atom, https://x/b.atom",
-                                                   "token": "should-not-be-echoed"},
-                                        "server": {"sync_every_minutes": 15}, "bogus": {"x": 1}, "ai": {"api_key": "sk-test"}}).get_json()
+                                                   "token": "should-not-be-echoed", "include_courses": 1001},
+                                        "server": {"sync_every_minutes": "15"}, "bogus": {"x": 1}, "ai": {"api_key": "sk-test"}}).get_json()
     assert r["ok"] and "canvas.ics_url" in r["changed"] and "bogus.x" not in r["changed"]
     c = r["config"]
     assert c["canvas"]["announcement_feeds"] == ["https://x/a.atom", "https://x/b.atom"] and c["server"]["sync_every_minutes"] == 15
+    assert c["canvas"]["include_courses"] == ["1001"]                          # scalars become one-element lists
     assert c["canvas"]["has_token"] is True and "token" not in c["canvas"] and c["ai"]["key_in_config"] is True and "api_key" not in c["ai"]
+    bad = client.put("/api/config", json={"server": {"sync_every_minutes": "soon"}})
+    assert bad.status_code == 400 and "sync_every_minutes" in bad.get_json()["error"]
+    assert client.get("/api/config").get_json()["server"]["sync_every_minutes"] == 15   # nothing changed on a rejected write
+    assert client.put("/api/config", json={"canvas": {"fetch_files": "nope"}}).status_code == 400
 
 
-def test_canvas_login_validation_and_logout(client):
-    r = client.post("/api/canvas/login", json={"method": "token", "token": ""})
-    assert r.status_code == 400 and "access token" in r.get_json()["error"]
-    r = client.post("/api/canvas/login", json={"base_url": "canvas.school.edu", "method": "paste", "cookie": "foo=bar; _ga=1"})
-    assert r.status_code == 400 and "session cookie" in r.get_json()["error"]
+def test_canvas_login_blocked_in_demo_and_logout(client):
+    r = client.post("/api/canvas/login", json={"method": "token", "token": "x"})
+    assert r.status_code == 400 and "Demo" in r.get_json()["error"]
+    assert client.post("/api/outlook/login/start").status_code == 400
+    client.application.config["RADAR_CFG"]["canvas"]["token"] = "tok"
     r = client.post("/api/canvas/logout").get_json()
-    assert r["ok"] and r["auth"] in ("off", "token")
+    assert r["ok"] and r["auth"] == "off"
+    assert client.get("/api/config").get_json()["canvas"]["has_token"] is False     # Disconnect really disconnects
+
+
+def test_canvas_login_validation(tmp_path, monkeypatch):
+    monkeypatch.setenv("RADAR_HOME", str(tmp_path))
+    cfg = copy.deepcopy(cfgmod.DEFAULTS)
+    cfg["ai"]["enabled"] = False
+    cfg["server"]["sync_every_minutes"] = 0
+    app = create_app(cfg, Store(tmp_path / "r.db"), demo=False, app_mode=True, api_token=TOKEN)
+    app.config["TESTING"] = True
+    c = app.test_client()
+    c.environ_base["HTTP_X_RADAR_TOKEN"] = TOKEN
+    r = c.post("/api/canvas/login", json={"method": "token", "token": "x"})
+    assert r.status_code == 400 and "URL" in r.get_json()["error"]
+    r = c.post("/api/canvas/login", json={"base_url": "canvas.school.edu", "method": "paste", "cookie": "foo=bar; _ga=1"})
+    assert r.status_code == 400 and "session cookie" in r.get_json()["error"]
+    d = c.get("/api/dashboard").get_json()
+    assert d["configured"] is False                                             # nothing connected yet -> Welcome screen
+    assert c.put("/api/config", json={"outlook": {"enabled": True}}).status_code == 200
+    assert c.get("/api/dashboard").get_json()["configured"] is True             # mail-only setups count as configured
 
 
 def test_item_actions_and_notifications(client):
@@ -110,3 +147,13 @@ def test_item_actions_and_notifications(client):
 def test_outlook_login_status_idle(client):
     s = client.get("/api/outlook/login/status").get_json()
     assert s["state"] in ("idle", "pending", "done", "error")
+
+
+def test_last_sync_only_when_something_ran(tmp_path, monkeypatch):
+    from radar.sync import run_sync
+    monkeypatch.setenv("RADAR_HOME", str(tmp_path))
+    cfg = copy.deepcopy(cfgmod.DEFAULTS)
+    cfg["ai"]["enabled"] = False
+    store = Store(tmp_path / "r.db")
+    run_sync(cfg, store, log=lambda *a: None, use_ai=False)
+    assert store.get_meta("last_sync") is None

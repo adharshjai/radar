@@ -24,6 +24,15 @@ final class AppState {
     var syncLog: [String] = []
     var config: ConfigSummary?
     var courseColors: [String: Color] = [:]
+    var courseFilter: String? = nil
+    var settingsError: String?
+    var outlookFlow: OutlookFlow?
+    private var previousSelection: Screen? = nil
+    private var lastSeenSync: String? = nil
+    private var restarts = 0
+    private var outlookTask: Task<Void, Never>?
+
+    struct OutlookFlow { var code: String; var url: String; var pending: Bool; var message: String }
     var notificationsEnabled: Bool {
         get { UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "notifications") }
@@ -38,6 +47,8 @@ final class AppState {
 
     func boot() {
         engine.onLog = { [weak self] line in self?.syncLog.append(line) }
+        engine.onExit = { [weak self] status in self?.engineExited(status) }
+        engineError = nil
         do {
             try engine.start()
         } catch {
@@ -48,21 +59,43 @@ final class AppState {
         Task { await waitForEngine() }
     }
 
+    /// The engine died underneath us: stop polling, tell the user, and try a bounded restart.
+    private func engineExited(_ status: Int32) {
+        pollTask?.cancel(); pollTask = nil
+        syncPollTask?.cancel(); syncPollTask = nil
+        syncing = false
+        engineReady = false
+        let tail = engine.logLines.suffix(4).joined(separator: "\n")
+        engineError = "Radar's sync engine stopped (exit \(status)).\n\(tail)"
+        restarts += 1
+        if restarts <= 3 {
+            Task { try? await Task.sleep(for: .seconds(2)); boot() }
+        }
+    }
+
+    func retryEngine() {
+        restarts = 0
+        engine.stop()
+        boot()
+    }
+
     private func waitForEngine() async {
         guard let api else { return }
         for _ in 0..<150 {
+            if engine.process == nil { return }          // it already died; engineExited() reported why
             if await api.health() {
                 engineReady = true
                 engineError = nil
+                restarts = 0
                 await refresh()
                 await loadConfig()
                 startPolling()
-                requestNotificationPermission()
                 return
             }
             try? await Task.sleep(for: .milliseconds(200))
         }
-        engineError = "The sync engine did not start. " + (engine.logLines.suffix(3).joined(separator: " · "))
+        engine.stop()
+        engineError = "The sync engine did not answer within 30 seconds.\n" + engine.logLines.suffix(4).joined(separator: "\n")
     }
 
     func shutdown() {
@@ -92,8 +125,23 @@ final class AppState {
             syncing = d.syncing
             updateBadge()
             if d.syncing, syncPollTask == nil { watchSync() }
+            if let ls = d.last_sync, ls != lastSeenSync {
+                let first = lastSeenSync == nil
+                lastSeenSync = ls
+                if !first { await deliverNotifications() }     // a scheduled sync finished between polls
+            }
         } catch {
-            lastError = error.localizedDescription
+            // Background polls stay quiet; a dead engine is reported through engineExited().
+            syncLog.append("[poll] \(error.localizedDescription)")
+        }
+    }
+
+    /// Search: jump to Everything while typing, come back when the field is cleared.
+    func searchChanged(_ text: String) {
+        if !text.isEmpty {
+            if selection != .search { previousSelection = selection; selection = .search }
+        } else if selection == .search {
+            selection = previousSelection ?? .today
         }
     }
 
@@ -176,7 +224,10 @@ final class AppState {
         guard let api else { return }
         var body: [String: Any] = ["title": title]
         if let due {
-            let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm"
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.calendar = Calendar(identifier: .gregorian)
+            f.dateFormat = "yyyy-MM-dd'T'HH:mm"
             body["due"] = f.string(from: due)
         }
         if let courseID { body["course_id"] = courseID }
@@ -266,7 +317,7 @@ final class AppState {
         if let token { body["token"] = token }
         if let cookie { body["cookie"] = cookie }
         do {
-            let r = try await api.post("/api/canvas/login", body)
+            let r = try await api.post("/api/canvas/login", body, timeout: 600)   // the Keychain prompt can sit open for a while
             await loadConfig()
             let who = [r["name"] as? String, r["email"] as? String].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
             return LoginResult(ok: true, message: "Connected as \(who)")
@@ -281,22 +332,67 @@ final class AppState {
         await loadConfig()
     }
 
-    struct DeviceCode { let code: String; let url: String; let message: String }
-
-    func outlookLoginStart() async -> Result<DeviceCode, APIError> {
-        guard let api else { return .failure(APIError(message: "engine not ready")) }
-        do {
-            let r = try await api.post("/api/outlook/login/start")
-            return .success(DeviceCode(code: r["user_code"] as? String ?? "", url: r["verification_uri"] as? String ?? "https://microsoft.com/devicelogin",
-                                       message: r["message"] as? String ?? ""))
-        } catch let e as APIError { return .failure(e) } catch { return .failure(APIError(message: error.localizedDescription)) }
+    /// Device-code sign-in lives here (not in the Settings view) so closing the window doesn't lose it.
+    func startOutlookLogin() {
+        guard let api else { return }
+        outlookFlow = OutlookFlow(code: "", url: "", pending: true, message: "Contacting Microsoft…")
+        outlookTask?.cancel()
+        outlookTask = Task {
+            do {
+                let r = try await api.post("/api/outlook/login/start", timeout: 120)
+                outlookFlow = OutlookFlow(code: r["user_code"] as? String ?? "", url: r["verification_uri"] as? String ?? "https://microsoft.com/devicelogin",
+                                          pending: true, message: "")
+            } catch {
+                outlookFlow = OutlookFlow(code: "", url: "", pending: false, message: error.localizedDescription)
+                return
+            }
+            struct R: Decodable { let state: String; let account: String?; let error: String? }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let s = try? await api.get("/api/outlook/login/status", as: R.self) else { continue }
+                if s.state == "done" {
+                    outlookFlow = nil
+                    await loadConfig()
+                    sync()
+                    return
+                }
+                if s.state == "error" || s.state == "idle" {
+                    outlookFlow = OutlookFlow(code: "", url: "", pending: false, message: s.error ?? "Sign-in was cancelled or timed out.")
+                    return
+                }
+            }
+        }
     }
 
-    func outlookLoginStatus() async -> (state: String, account: String?, error: String?) {
-        guard let api else { return ("error", nil, "engine not ready") }
-        struct R: Decodable { let state: String; let account: String?; let error: String? }
-        let r = try? await api.get("/api/outlook/login/status", as: R.self)
-        return (r?.state ?? "error", r?.account, r?.error)
+    func cancelOutlookLogin() {
+        outlookTask?.cancel()
+        outlookFlow = nil
+        guard let api else { return }
+        Task { _ = try? await api.post("/api/outlook/login/cancel") }
+    }
+
+    /// Restore a sign-in that was already in progress when the Settings window was reopened.
+    func resumeOutlookLoginIfPending() async {
+        guard let api, outlookFlow == nil else { return }
+        struct R: Decodable { let state: String; let user_code: String?; let verification_uri: String? }
+        if let s = try? await api.get("/api/outlook/login/status", as: R.self), s.state == "pending", let code = s.user_code {
+            outlookFlow = OutlookFlow(code: code, url: s.verification_uri ?? "https://microsoft.com/devicelogin", pending: true, message: "")
+            startPollingOutlookOnly()
+        }
+    }
+
+    private func startPollingOutlookOnly() {
+        guard let api else { return }
+        outlookTask?.cancel()
+        outlookTask = Task {
+            struct R: Decodable { let state: String; let account: String?; let error: String? }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let s = try? await api.get("/api/outlook/login/status", as: R.self) else { continue }
+                if s.state == "done" { outlookFlow = nil; await loadConfig(); sync(); return }
+                if s.state != "pending" { outlookFlow = OutlookFlow(code: "", url: "", pending: false, message: s.error ?? "Sign-in was cancelled."); return }
+            }
+        }
     }
 
     func outlookLogout() async {
@@ -307,9 +403,16 @@ final class AppState {
 
     // MARK: - notifications & login item
 
-    private func requestNotificationPermission() {
-        guard Bundle.main.bundleIdentifier != nil, Bundle.main.bundleURL.pathExtension == "app" else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
+    /// Ask for permission the first time there is actually something to show, not on first launch.
+    private func ensureNotificationPermission() async -> Bool {
+        guard Bundle.main.bundleIdentifier != nil, Bundle.main.bundleURL.pathExtension == "app" else { return false }
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional: return true
+        case .notDetermined: return (try? await center.requestAuthorization(options: [.alert, .badge, .sound])) ?? false
+        default: return false
+        }
     }
 
     func deliverNotifications() async {
@@ -318,6 +421,7 @@ final class AppState {
         guard let r = try? await api.post("/api/notifications/claim"),
               let data = try? JSONSerialization.data(withJSONObject: r),
               let items = try? JSONDecoder().decode(R.self, from: data).items, !items.isEmpty else { return }
+        guard await ensureNotificationPermission() else { return }
         let center = UNUserNotificationCenter.current()
         for item in items.prefix(5) {
             let content = UNMutableNotificationContent()
@@ -341,8 +445,8 @@ final class AppState {
     var launchAtLogin: Bool {
         get { SMAppService.mainApp.status == .enabled }
         set {
-            do { if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
-            catch { lastError = "Could not change login item: \(error.localizedDescription)" }
+            do { if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }; settingsError = nil }
+            catch { settingsError = "Could not change the login item: \(error.localizedDescription). Move Radar to /Applications and try again." }
         }
     }
 }

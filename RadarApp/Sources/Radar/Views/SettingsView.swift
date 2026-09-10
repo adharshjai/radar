@@ -1,14 +1,26 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(AppState.self) private var state
     var body: some View {
-        TabView {
-            CanvasSettings().tabItem { Label("Canvas", systemImage: "graduationcap") }
-            EmailSettings().tabItem { Label("Email", systemImage: "envelope") }
-            AISettings().tabItem { Label("AI", systemImage: "sparkles") }
-            GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
+        VStack(spacing: 0) {
+            if let e = state.settingsError {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.critical)
+                    Text(e).font(.callout).textSelection(.enabled)
+                    Spacer()
+                    Button("Dismiss") { state.settingsError = nil }.controlSize(.small)
+                }
+                .padding(10).background(Palette.critical.opacity(0.08))
+            }
+            TabView {
+                CanvasSettings().tabItem { Label("Canvas", systemImage: "graduationcap") }
+                EmailSettings().tabItem { Label("Email", systemImage: "envelope") }
+                AISettings().tabItem { Label("AI", systemImage: "sparkles") }
+                GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
+            }
         }
-        .frame(width: 620, height: 520)
+        .frame(width: 640, height: 560)
     }
 }
 
@@ -62,12 +74,16 @@ struct CanvasSettings: View {
                 }
                 HStack {
                     Button(busy ? "Connecting…" : "Connect") { connect() }.disabled(busy || baseURL.isEmpty).buttonStyle(.borderedProminent)
+                    if busy { ProgressView().controlSize(.small); Text("If macOS asks about Keychain access, click Always Allow.").font(.caption).foregroundStyle(.secondary) }
                     if state.config?.canvas.has_session == true || state.config?.canvas.has_token == true {
-                        Button("Disconnect") { Task { await state.canvasLogout(); await state.loadConfig() } }
+                        Button("Disconnect") { Task { await state.canvasLogout(); await state.loadConfig(); result = nil } }
                     }
-                    if let r = result {
+                }
+                if let r = result {
+                    HStack(alignment: .top, spacing: 6) {
                         Image(systemName: r.ok ? "checkmark.circle.fill" : "xmark.octagon.fill").foregroundStyle(r.ok ? Palette.good : Palette.critical)
-                        Text(r.message).font(.callout).foregroundStyle(r.ok ? .primary : Palette.critical).textSelection(.enabled).lineLimit(4)
+                        ScrollView { Text(r.message).font(.callout).foregroundStyle(r.ok ? .primary : Palette.critical).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                            .frame(maxHeight: r.ok ? 24 : 110)
                     }
                 }
             }
@@ -105,9 +121,6 @@ struct CanvasSettings: View {
 
 struct EmailSettings: View {
     @Environment(AppState.self) private var state
-    @State private var code: AppState.DeviceCode?
-    @State private var pending = false
-    @State private var message = ""
     @State private var appleMail = false
     @State private var appleAccount = ""
     @State private var clientID = ""
@@ -117,23 +130,30 @@ struct EmailSettings: View {
     var body: some View {
         Form {
             Section("Outlook (Microsoft 365)") {
-                if let o = state.config?.outlook, o.signed_in == true {
+                if let o = state.config?.outlook, o.signed_in == true, state.outlookFlow == nil {
                     LabeledContent("Signed in as") { Text(o.account ?? "your school account") }
                     Button("Sign out") { Task { await state.outlookLogout() } }
-                } else if let c = code {
+                } else if let flow = state.outlookFlow, flow.pending {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("1. Copy this code:").font(.callout)
-                        HStack {
-                            Text(c.code).font(.system(size: 26, weight: .bold, design: .monospaced)).textSelection(.enabled)
-                            Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(c.code, forType: .string) }
+                        if flow.code.isEmpty {
+                            HStack { ProgressView().controlSize(.small); Text(flow.message).font(.callout).foregroundStyle(.secondary) }
+                        } else {
+                            Text("1. Copy this code:").font(.callout)
+                            HStack {
+                                Text(flow.code).font(.system(size: 26, weight: .bold, design: .monospaced)).textSelection(.enabled)
+                                Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(flow.code, forType: .string) }
+                            }
+                            Text("2. Sign in with your school account and paste the code:").font(.callout)
+                            Button("Open Microsoft sign-in") { if let u = URL(string: flow.url) { NSWorkspace.shared.open(u) } }.buttonStyle(.borderedProminent)
+                            HStack { ProgressView().controlSize(.small); Text("Waiting for you to finish signing in…").font(.callout).foregroundStyle(.secondary) }
                         }
-                        Text("2. Sign in with your school account and paste the code:").font(.callout)
-                        Button("Open Microsoft sign-in") { if let u = URL(string: c.url) { NSWorkspace.shared.open(u) } }.buttonStyle(.borderedProminent)
-                        HStack { if pending { ProgressView().controlSize(.small) }; Text(pending ? "Waiting for you to finish signing in…" : message).font(.callout).foregroundStyle(.secondary) }
+                        Button("Cancel") { state.cancelOutlookLogin() }.controlSize(.small)
                     }
                 } else {
-                    Button("Sign in with Microsoft") { start() }.buttonStyle(.borderedProminent)
-                    if !message.isEmpty { Text(message).font(.callout).foregroundStyle(Palette.critical).textSelection(.enabled) }
+                    Button("Sign in with Microsoft") { state.startOutlookLogin() }.buttonStyle(.borderedProminent)
+                    if let flow = state.outlookFlow, !flow.message.isEmpty {
+                        Text(flow.message).font(.callout).foregroundStyle(Palette.critical).textSelection(.enabled)
+                    }
                     Text("Read-only access to mail and calendar (Mail.Read, Calendars.Read). If your school blocks the sign-in, ask IT to allow \"Microsoft Graph Command Line Tools\" or use Apple Mail below.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -152,29 +172,11 @@ struct EmailSettings: View {
         .formStyle(.grouped)
         .task {
             await state.loadConfig()
+            await state.resumeOutlookLoginIfPending()
             if let c = state.config, !loaded {
                 appleMail = c.applemail.enabled ?? false; appleAccount = c.applemail.account ?? ""
                 clientID = c.outlook.client_id ?? ""; tenant = c.outlook.tenant ?? "organizations"
                 loaded = true
-            }
-        }
-    }
-
-    private func start() {
-        message = ""
-        Task {
-            switch await state.outlookLoginStart() {
-            case .success(let c):
-                code = c
-                pending = true
-                while pending {
-                    try? await Task.sleep(for: .seconds(2))
-                    let s = await state.outlookLoginStatus()
-                    if s.state == "done" { pending = false; code = nil; message = "Connected"; await state.loadConfig(); state.sync() }
-                    else if s.state == "error" { pending = false; code = nil; message = s.error ?? "Sign-in failed" }
-                }
-            case .failure(let e):
-                message = e.message
             }
         }
     }

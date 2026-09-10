@@ -7,6 +7,9 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import secrets as _secrets
+from urllib.parse import urlencode
+
 from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 
 from . import config as cfgmod
@@ -19,7 +22,7 @@ from .triage import KIND_ICONS, KIND_LABELS, build_dashboard, humanize_ago, huma
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 
 
-def sync_problems(store: Store) -> list[dict]:
+def sync_problems(store: Store, app_mode: bool = False) -> list[dict]:
     """Recent failed syncs (newer than the last success) with a fix hint."""
     problems = []
     for src in ("canvas", "outlook", "applemail", "canvas-feeds"):
@@ -28,11 +31,20 @@ def sync_problems(store: Store) -> list[dict]:
             msg = f["message"]
             fix = None
             if "session expired" in msg.lower() or "login canvas" in msg or "No Canvas login found" in msg:
-                fix = f"Sign in to Canvas in your browser, then press Sync now (or run:  {cfgmod.CMD} login canvas)"
+                fix = ("Sign in to Canvas in your browser, then press Sync (or reconnect in Settings › Canvas)" if app_mode
+                       else f"Sign in to Canvas in your browser, then press Sync now (or run:  {cfgmod.CMD} login canvas)")
             elif src == "outlook" and ("Not signed in" in msg or "rejected the token" in msg):
-                fix = f"Run:  {cfgmod.CMD} login outlook"
+                fix = "Sign in again in Settings › Email" if app_mode else f"Run:  {cfgmod.CMD} login outlook"
+            if app_mode:
+                msg = msg.replace(f"(or run: {cfgmod.CMD} login canvas)", "").replace(f"Run: {cfgmod.CMD} login outlook", "").strip()
             problems.append({"source": src, "message": msg, "fix": fix, "when": f["finished"]})
     return problems
+
+
+def sources_configured(cfg: dict) -> bool:
+    c = cfg["canvas"]
+    return bool((c.get("base_url") and (c.get("auth") or "auto") != "off") or c.get("ics_url") or c.get("announcement_feeds")
+                or cfg["outlook"].get("enabled") or cfg["applemail"].get("enabled"))
 
 
 def course_groups(dash: dict, c: dict, course_id: str):
@@ -354,27 +366,55 @@ def create_app(cfg: dict | None = None, store: Store | None = None, demo: bool =
         if every <= 0 or demo:
             return
         last = parse_dt(store.get_meta("last_sync"))
-        if not last or utcnow() - last > timedelta(minutes=every):
+        if sources_configured(cfg) and (not last or utcnow() - last > timedelta(minutes=every)):
             time.sleep(3)
             _sync_worker()
         while True:
             time.sleep(every * 60)
-            if not state["syncing"]:
+            if not state["syncing"] and sources_configured(cfg):
                 _sync_worker()
 
     @app.before_request
     def _guard():
+        # CSRF: state-changing requests must not come from another website open in the browser.
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            origin = (request.headers.get("Origin") or "").rstrip("/")
+            site = request.headers.get("Sec-Fetch-Site") or ""
+            if (origin and origin != request.host_url.rstrip("/")) or site in ("cross-site", "same-site"):
+                abort(403)
         token = app.config.get("RADAR_API_TOKEN")
-        if not token or request.path.startswith("/api/") or request.path.startswith("/static/"):
-            return None      # /api/* is checked by the blueprint; static files are harmless
-        import secrets as _secrets
+        if not token or request.path.startswith("/static/") or request.path == "/api/health":
+            return None
         given = request.headers.get("X-Radar-Token") or request.args.get("token") or request.cookies.get("radar_token")
         if not _secrets.compare_digest(given or "", token):
             abort(401)
+        if request.args.get("token") and request.method == "GET":
+            # Move the secret out of the address bar into an HttpOnly cookie so the rest of the site works.
+            args = request.args.to_dict(flat=False)
+            args.pop("token", None)
+            resp = redirect(request.path + ("?" + urlencode(args, doseq=True) if args else ""), code=303)
+            resp.set_cookie("radar_token", token, httponly=True, samesite="Strict", path="/")
+            return resp
 
     if not app.config.get("TESTING"):
         threading.Thread(target=scheduler, daemon=True).start()
     return app
+
+
+def _watch_parent(pid: int):
+    """Exit with the app that launched us, even if it was force-quit and never sent SIGTERM."""
+    import os
+
+    def loop():
+        while True:
+            time.sleep(2)
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                os._exit(0)
+            if os.getppid() != pid:
+                os._exit(0)
+    threading.Thread(target=loop, daemon=True).start()
 
 
 def serve(cfg: dict | None = None, store: Store | None = None, port: int | None = None, open_browser: bool = True, demo: bool = False,
@@ -388,6 +428,9 @@ def serve(cfg: dict | None = None, store: Store | None = None, port: int | None 
         open_browser = False
         import logging
         logging.getLogger("werkzeug").setLevel(logging.WARNING)
+        parent = os.environ.get("RADAR_PARENT_PID")
+        if parent and parent.isdigit():
+            _watch_parent(int(parent))
     url = f"http://127.0.0.1:{port}/"
     if open_browser:
         import webbrowser

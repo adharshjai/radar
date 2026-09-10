@@ -15,15 +15,16 @@ final class API: Sendable {
         base = URL(string: "http://127.0.0.1:\(port)")!
         self.token = token
         let cfg = URLSessionConfiguration.ephemeral
-        cfg.timeoutIntervalForRequest = 60
+        cfg.timeoutIntervalForRequest = 600        // per-request timeouts are set on each URLRequest
         session = URLSession(configuration: cfg)
     }
 
-    private func request(_ path: String, method: String = "GET", body: Any? = nil, query: [String: String] = [:]) throws -> URLRequest {
+    private func request(_ path: String, method: String = "GET", body: Any? = nil, query: [String: String] = [:], timeout: TimeInterval = 60) throws -> URLRequest {
         var comps = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { comps.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) } }
         var req = URLRequest(url: comps.url!)
         req.httpMethod = method
+        req.timeoutInterval = timeout
         req.setValue(token, forHTTPHeaderField: "X-Radar-Token")
         if let body {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -50,8 +51,8 @@ final class API: Sendable {
     }
 
     @discardableResult
-    func post(_ path: String, _ body: [String: Any] = [:]) async throws -> [String: Any] {
-        let data = try await send(try request(path, method: "POST", body: body))
+    func post(_ path: String, _ body: [String: Any] = [:], timeout: TimeInterval = 60) async throws -> [String: Any] {
+        let data = try await send(try request(path, method: "POST", body: body, timeout: timeout))
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 

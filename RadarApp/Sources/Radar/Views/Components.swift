@@ -86,13 +86,22 @@ struct SectionBox<Content: View>: View {
     let title: String
     let count: Int
     var tint: Color? = nil
-    var collapsedByDefault = false
-    var emptyText = "Nothing here."
-    @ViewBuilder var content: () -> Content
-    @State private var expanded: Bool? = nil
+    var emptyText: String
+    let content: () -> Content
+    @AppStorage private var expanded: Bool     // remembered per section title across navigation and launches
+
+    init(title: String, count: Int, tint: Color? = nil, collapsedByDefault: Bool = false, emptyText: String = "Nothing here.",
+         @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.count = count
+        self.tint = tint
+        self.emptyText = emptyText
+        self.content = content
+        _expanded = AppStorage(wrappedValue: !collapsedByDefault, "section.open." + title)
+    }
 
     var body: some View {
-        let isOpen = expanded ?? !collapsedByDefault
+        let isOpen = expanded
         VStack(alignment: .leading, spacing: 6) {
             Button {
                 withAnimation(.snappy) { expanded = !isOpen }
@@ -153,5 +162,36 @@ struct EmptyHint: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
+    }
+}
+
+/// Wraps its children onto as many rows as needed (chips, meta lines).
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    var rowSpacing: CGFloat = 3
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        // A zero/unspecified width is SwiftUI probing for the minimum size: answer with one row, not N rows.
+        let width: CGFloat = (proposal.width ?? 0) > 0 ? proposal.width! : .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, maxW: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width + 0.5 { x = 0; y += rowH + rowSpacing; rowH = 0 }
+            x += size.width + spacing
+            rowH = max(rowH, size.height)
+            maxW = max(maxW, x - spacing)
+        }
+        return CGSize(width: width == .infinity ? maxW : width, height: y + rowH)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowH: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX + 0.5 { x = bounds.minX; y += rowH + rowSpacing; rowH = 0 }
+            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowH = max(rowH, size.height)
+        }
     }
 }

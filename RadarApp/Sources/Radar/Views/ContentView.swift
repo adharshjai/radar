@@ -13,7 +13,7 @@ struct ContentView: View {
         }
         .searchable(text: $state.searchText, placement: .toolbar, prompt: "Search everything")
         .onSubmit(of: .search) { state.selection = .search }
-        .onChange(of: state.searchText) { _, new in if !new.isEmpty, state.selection != .search { state.selection = .search } }
+        .onChange(of: state.searchText) { _, new in state.searchChanged(new) }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { showAdd = true } label: { Label("Add Task", systemImage: "plus") }.help("Add my own task")
@@ -80,7 +80,11 @@ struct ContentView: View {
 
     @ViewBuilder private var detail: some View {
         if let err = state.engineError {
-            EmptyHint(symbol: "exclamationmark.octagon", title: "Engine unavailable", text: err)
+            VStack(spacing: 14) {
+                EmptyHint(symbol: "exclamationmark.octagon", title: "Radar's engine stopped", text: err)
+                Button("Try again") { state.retryEngine() }.buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !state.engineReady {
             VStack(spacing: 12) { ProgressView(); Text("Starting Radar…").foregroundStyle(.secondary) }
         } else if !state.dashboard.configured && state.dashboard.courses.isEmpty && !state.isDemo {

@@ -33,8 +33,10 @@ struct ItemRow: View {
         .popover(isPresented: $showNote, arrowEdge: .trailing) { notePopover }
     }
 
+    private var isLive: Bool { ["open", "missing", "pastdue", "locked", "unread"].contains(item.status) && item.user_state != "done" }
+
     private var titleLine: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        FlowLayout(spacing: 6, rowSpacing: 2) {
             Button { state.open(item) } label: {
                 Text(item.title).font(.body.weight(.semibold)).lineLimit(compact ? 1 : 2).multilineTextAlignment(.leading)
             }
@@ -53,16 +55,17 @@ struct ItemRow: View {
     }
 
     private var metaLine: some View {
-        HStack(spacing: 10) {
+        FlowLayout(spacing: 10, rowSpacing: 2) {
             if showCourse, let c = item.course {
                 Button { if let id = item.course_id { state.selection = .course(id) } } label: { CourseChip(name: c, color: color) }.buttonStyle(.plain)
             }
             if let d = item.due_text, !d.isEmpty {
-                Text(d).foregroundStyle(item.isOverdue ? Palette.critical : .secondary).fontWeight(item.isOverdue ? .semibold : .regular)
+                let hot = item.isOverdue && isLive
+                Text(d).foregroundStyle(hot ? Palette.critical : .secondary).fontWeight(hot ? .semibold : .regular)
             }
             if let p = Fmt.points(item.points) { Text(p) }
             if let s = Fmt.score(item.score, item.points) { Text(s) } else if let g = item.grade, item.status == "graded" { Text(g) }
-            if let s = item.sender, !s.isEmpty { Text("from \(s)").lineLimit(1) }
+            if let s = item.sender, !s.isEmpty { Text("from \(s)").lineLimit(1).frame(maxWidth: 220, alignment: .leading) }
             if let a = item.ago, !a.isEmpty, ["announcement", "email", "conversation", "file", "discussion"].contains(item.kind) { Text(a) }
             if let g = item.graded_ago { Text("graded \(g)") }
             if let loc = ex?.location, !loc.isEmpty { Text("@ \(loc)").lineLimit(1) }

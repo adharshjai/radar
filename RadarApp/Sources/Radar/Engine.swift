@@ -12,6 +12,7 @@ final class Engine {
     var demo = ProcessInfo.processInfo.environment["RADAR_DEMO"] == "1"
     private(set) var launch: Launch?
     var onLog: ((String) -> Void)?
+    var onExit: ((Int32) -> Void)?
 
     init() {
         token = UUID().uuidString.replacingOccurrences(of: "-", with: "") + UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -73,21 +74,26 @@ final class Engine {
         p.arguments = args
         var env = ProcessInfo.processInfo.environment
         env["RADAR_API_TOKEN"] = token
+        env["RADAR_PARENT_PID"] = String(getpid())
         env["PYTHONUNBUFFERED"] = "1"
-        if demo { env["RADAR_HOME"] = NSTemporaryDirectory() + "radar-demo-\(getpid())" }
+        if demo { env["RADAR_HOME"] = NSTemporaryDirectory() + "radar-demo" }
         p.environment = env
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
         pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
             let data = h.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            if data.isEmpty { h.readabilityHandler = nil; return }      // EOF: stop, or this handler spins a core
+            guard let text = String(data: data, encoding: .utf8) else { return }
             Task { @MainActor in self?.append(text) }
         }
         p.terminationHandler = { [weak self] proc in
+            pipe.fileHandleForReading.readabilityHandler = nil
+            let status = proc.terminationStatus
             Task { @MainActor in
-                self?.append("[engine exited with status \(proc.terminationStatus)]")
+                self?.append("[engine exited with status \(status)]")
                 self?.process = nil
+                self?.onExit?(status)
             }
         }
         try p.run()
@@ -113,6 +119,8 @@ final class Engine {
 
     func stop() {
         guard let p = process else { return }
+        onExit = nil
+        p.terminationHandler = nil
         p.terminate()
         process = nil
     }

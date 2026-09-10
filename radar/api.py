@@ -78,17 +78,13 @@ def _dash():
 
 def _problems():
     from .web import sync_problems
-    return sync_problems(_store())
+    return sync_problems(_store(), bool(current_app.config.get("RADAR_APP_MODE")))
 
 
-@api.before_request
-def _auth():
-    token = current_app.config.get("RADAR_API_TOKEN")
-    if not token or request.path.endswith("/api/health"):
-        return None
-    given = request.headers.get("X-Radar-Token") or request.args.get("token")
-    if not secrets.compare_digest(given or "", token):
-        abort(401)
+def _demo_blocked():
+    if current_app.config.get("RADAR_DEMO"):
+        return jsonify(ok=False, error="Demo data: accounts can't be connected here. Quit and open Radar normally."), 400
+    return None
 
 
 @api.get("/api/health")
@@ -106,8 +102,9 @@ def dashboard():
         for it in d["buckets"][key]:
             if it.get("course_id"):
                 open_counts[it["course_id"]] = open_counts.get(it["course_id"], 0) + 1
+    from .web import sources_configured
     cfg = _cfg()
-    configured = bool(cfg["canvas"].get("base_url")) and (cfg["canvas"].get("auth") != "off") or bool(d["courses"])
+    configured = sources_configured(cfg) or bool(d["courses"])
     return jsonify({
         "generated_at": iso(utcnow()), "last_sync": _store().get_meta("last_sync"), "syncing": state["syncing"],
         "configured": configured, "demo": bool(current_app.config.get("RADAR_DEMO")),
@@ -227,29 +224,49 @@ def status():
 
 # ------------------------------------------------------------------ config & accounts
 
+def outlook_signed_in() -> bool:
+    """Read the msal cache file directly: no network, no tenant discovery."""
+    p = cfgmod.home() / "msal_cache.json"
+    if not p.exists():
+        return False
+    try:
+        import msal
+        cache = msal.SerializableTokenCache()
+        cache.deserialize(p.read_text())
+        return bool(cache.find(msal.TokenCache.CredentialType.ACCOUNT))
+    except Exception:
+        return False
+
+
+def _strs(v) -> list[str]:
+    if v is None:
+        return []
+    if isinstance(v, (list, tuple)):
+        return [str(x) for x in v]
+    return [str(v)]
+
+
 def config_summary(cfg: dict, store) -> dict:
     from .sources.canvas_session import load_cookies
     saved = load_cookies(cfgmod.home())
     outlook_account = store.get_meta("outlook_account")
-    signed_in = False
-    try:
-        from .sources.outlook import OutlookSource
-        signed_in = bool(OutlookSource(cfg["outlook"], cfgmod.home() / "msal_cache.json").accounts())
-    except Exception:
-        signed_in = False
+    signed_in = outlook_signed_in()
     has_key = bool(cfg["ai"].get("api_key") or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    canvas = {k: cfg["canvas"].get(k) for k in ("base_url", "auth", "browser", "cookie_file", "ics_url", "lookback_days", "lookahead_days",
+                                                "fetch_files", "parse_syllabus_files")}
+    for k in ("announcement_feeds", "include_courses", "exclude_courses"):
+        canvas[k] = _strs(cfg["canvas"].get(k))
     return {
-        "canvas": {k: cfg["canvas"].get(k) for k in ("base_url", "auth", "browser", "cookie_file", "ics_url", "announcement_feeds",
-                                                     "include_courses", "exclude_courses", "lookback_days", "lookahead_days",
-                                                     "fetch_files", "parse_syllabus_files")}
+        "canvas": canvas
         | {"has_token": bool(cfg["canvas"].get("token")), "has_session": bool(saved), "session_source": (saved or {}).get("source"),
            "session_saved_at": (saved or {}).get("saved_at")},
-        "outlook": {k: cfg["outlook"].get(k) for k in ("enabled", "client_id", "tenant", "lookback_days", "calendar", "folders", "max_messages")}
-        | {"signed_in": signed_in, "account": outlook_account},
+        "outlook": {k: cfg["outlook"].get(k) for k in ("enabled", "client_id", "tenant", "lookback_days", "calendar", "max_messages")}
+        | {"folders": _strs(cfg["outlook"].get("folders")), "signed_in": signed_in, "account": outlook_account},
         "applemail": {k: cfg["applemail"].get(k) for k in ("enabled", "account", "lookback_days", "max_messages")},
         "ai": {k: cfg["ai"].get(k) for k in ("enabled", "model", "max_items_per_sync")}
         | {"has_key": has_key, "key_in_config": bool(cfg["ai"].get("api_key"))},
-        "profile": {k: cfg["profile"].get(k) for k in ("name", "email", "university_domains", "extra_keywords")},
+        "profile": {"name": cfg["profile"].get("name"), "email": cfg["profile"].get("email"),
+                    "university_domains": _strs(cfg["profile"].get("university_domains")), "extra_keywords": _strs(cfg["profile"].get("extra_keywords"))},
         "server": {k: cfg["server"].get(k) for k in ("sync_every_minutes", "notify", "port")},
     }
 
@@ -259,11 +276,44 @@ def get_config():
     return jsonify(config_summary(_cfg(), _store()))
 
 
+LIST_KEYS = {"announcement_feeds", "include_courses", "exclude_courses", "university_domains", "extra_keywords", "folders"}
+INT_KEYS = {"lookback_days", "lookahead_days", "max_messages", "max_items_per_sync", "sync_every_minutes", "port"}
+BOOL_KEYS = {"fetch_files", "parse_syllabus_files", "enabled", "calendar", "notify"}
+
+
+def _coerce(k: str, v):
+    """Return the value in the type the engine expects, or raise ValueError."""
+    if k in LIST_KEYS:
+        if isinstance(v, str):
+            return [x.strip() for x in v.replace("\n", ",").split(",") if x.strip()]
+        if v is None:
+            return []
+        if isinstance(v, (list, tuple)):
+            return [str(x) for x in v]
+        return [str(v)]
+    if k in INT_KEYS:
+        if isinstance(v, bool) or not isinstance(v, (int, float, str)) or (isinstance(v, str) and not v.strip().lstrip("-").isdigit()):
+            raise ValueError(f"{k} must be a whole number")
+        return int(v)
+    if k in BOOL_KEYS:
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str) and v.lower() in ("true", "false", "1", "0", "yes", "no"):
+            return v.lower() in ("true", "1", "yes")
+        raise ValueError(f"{k} must be true or false")
+    if v is None:
+        return ""
+    if not isinstance(v, str):
+        raise ValueError(f"{k} must be text")
+    return v
+
+
 @api.put("/api/config")
 def put_config():
     cfg = _cfg()
     data = request.get_json(silent=True) or {}
     changed = []
+    staged = []
     for section, values in data.items():
         allowed = CONFIG_WRITABLE.get(section)
         if not allowed or not isinstance(values, dict):
@@ -271,16 +321,18 @@ def put_config():
         for k, v in values.items():
             if k not in allowed:
                 continue
-            if k == "base_url" and isinstance(v, str):
+            try:
+                v = _coerce(k, v)
+            except ValueError as e:
+                return jsonify(ok=False, error=str(e)), 400
+            if k == "base_url":
                 v = v.strip().rstrip("/")
                 if v and not v.startswith("http"):
                     v = "https://" + v
-            if k in ("announcement_feeds", "include_courses", "exclude_courses", "university_domains", "extra_keywords", "folders"):
-                if isinstance(v, str):
-                    v = [x.strip() for x in v.replace("\n", ",").split(",") if x.strip()]
-                v = [str(x) for x in (v or [])]
-            cfg[section][k] = v
-            changed.append(f"{section}.{k}")
+            staged.append((section, k, v))
+    for section, k, v in staged:
+        cfg[section][k] = v
+        changed.append(f"{section}.{k}")
     if changed:
         if not current_app.config.get("RADAR_DEMO"):
             cfgmod.save(cfg)
@@ -289,6 +341,8 @@ def put_config():
 
 @api.post("/api/canvas/login")
 def canvas_login():
+    if (blocked := _demo_blocked()) is not None:
+        return blocked
     from .sources.canvas import CanvasClient, CanvasError
     from .sources.canvas_session import CanvasSessionError, cookies_from_browser, cookies_from_string, has_session, save_cookies
     cfg = _cfg()
@@ -341,63 +395,76 @@ def canvas_login():
 
 @api.post("/api/canvas/logout")
 def canvas_logout():
+    """Disconnect completely: forget the browser session AND the token (the CLI's --logout keeps token mode)."""
     from .sources.canvas_session import clear_cookies
     cfg = _cfg()
     clear_cookies(cfgmod.home())
-    cfg["canvas"]["auth"] = "token" if cfg["canvas"].get("token") else "off"
+    cfg["canvas"]["token"] = ""
+    cfg["canvas"]["auth"] = "off"
     if not current_app.config.get("RADAR_DEMO"):
         cfgmod.save(cfg)
     return jsonify(ok=True, auth=cfg["canvas"]["auth"])
 
 
-_outlook_login: dict = {"state": "idle", "flow": None, "account": None, "error": None, "thread": None}
+_outlook_login: dict = {"state": "idle", "flow": None, "flow_id": None, "account": None, "error": None}
 
 
 @api.post("/api/outlook/login/start")
 def outlook_login_start():
-    from .sources.outlook import OutlookError, OutlookSource
+    if (blocked := _demo_blocked()) is not None:
+        return blocked
+    from .sources.outlook import OutlookSource
     cfg = _cfg()
-    cfg["outlook"]["enabled"] = True
-    src = OutlookSource(cfg["outlook"], cfgmod.home() / "msal_cache.json")
     try:
+        src = OutlookSource(cfg["outlook"], cfgmod.home() / "msal_cache.json")
         flow = src.start_device_flow()
-    except OutlookError as e:
-        return jsonify(ok=False, error=str(e)), 400
-    _outlook_login.update({"state": "pending", "flow": flow, "account": None, "error": None})
+    except Exception as e:
+        return jsonify(ok=False, error=f"Could not reach Microsoft sign-in: {e}"), 400
+    flow_id = secrets.token_hex(8)
+    _outlook_login.update({"state": "pending", "flow": flow, "flow_id": flow_id, "account": None, "error": None})
+    store = _store()
+    demo = bool(current_app.config.get("RADAR_DEMO"))
 
     def finish():
         try:
             src.finish_device_flow(flow)
             accts = src.accounts()
-            _outlook_login["account"] = accts[0].get("username") if accts else None
-            _outlook_login["state"] = "done"
-            if _outlook_login["account"]:
-                _store().set_meta("outlook_account", _outlook_login["account"])
-            if not current_app.config.get("RADAR_DEMO"):
+            account = accts[0].get("username") if accts else None
+            if _outlook_login.get("flow_id") != flow_id:
+                return                      # a newer sign-in attempt superseded this one
+            cfg["outlook"]["enabled"] = True
+            _outlook_login.update({"account": account, "state": "done"})
+            if account:
+                store.set_meta("outlook_account", account)
+            if not demo:
                 cfgmod.save(cfg)
         except Exception as e:
-            _outlook_login["error"] = str(e)
-            _outlook_login["state"] = "error"
+            if _outlook_login.get("flow_id") == flow_id:
+                _outlook_login.update({"error": str(e), "state": "error"})
 
-    app_obj = current_app._get_current_object()
-
-    def runner():
-        with app_obj.app_context():
-            finish()
-    t = threading.Thread(target=runner, daemon=True)
-    _outlook_login["thread"] = t
-    t.start()
+    threading.Thread(target=finish, daemon=True).start()
     return jsonify(ok=True, user_code=flow.get("user_code"), verification_uri=flow.get("verification_uri"),
                    message=flow.get("message"), expires_in=flow.get("expires_in"))
 
 
 @api.get("/api/outlook/login/status")
 def outlook_login_status():
-    return jsonify(state=_outlook_login["state"], account=_outlook_login["account"], error=_outlook_login["error"])
+    flow = _outlook_login.get("flow") or {}
+    return jsonify(state=_outlook_login["state"], account=_outlook_login["account"], error=_outlook_login["error"],
+                   user_code=flow.get("user_code") if _outlook_login["state"] == "pending" else None,
+                   verification_uri=flow.get("verification_uri") if _outlook_login["state"] == "pending" else None)
+
+
+@api.post("/api/outlook/login/cancel")
+def outlook_login_cancel():
+    _outlook_login.update({"state": "idle", "flow": None, "flow_id": None, "account": None, "error": None})
+    return jsonify(ok=True)
 
 
 @api.post("/api/outlook/logout")
 def outlook_logout():
+    if (blocked := _demo_blocked()) is not None:
+        return blocked
     from .sources.outlook import OutlookSource
     cfg = _cfg()
     try:

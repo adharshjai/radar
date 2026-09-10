@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build Radar.app: bundled Python engine (PyInstaller) + SwiftUI app (swift build) -> dist/Radar.app
 set -e
+set -o pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 VERSION="$(python3 -c 'import radar; print(radar.__version__)')"
@@ -15,8 +16,9 @@ fi
 engine-build/dist/radar-engine/radar-engine --help >/dev/null
 
 echo "== app (swift build)"
-( cd RadarApp && swift build -c release 2>&1 | tail -5 )
 BIN="RadarApp/.build/release/Radar"
+rm -f "$BIN"
+( cd RadarApp && swift build -c release 2>&1 | tail -5 )
 [ -x "$BIN" ] || { echo "swift build did not produce $BIN"; exit 1; }
 
 echo "== bundle"

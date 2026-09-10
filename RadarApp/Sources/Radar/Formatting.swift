@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum Palette {
@@ -9,7 +10,12 @@ enum Palette {
         Color(red: 0.290, green: 0.227, blue: 0.655), Color(red: 0.890, green: 0.286, blue: 0.282),
     ]
     static let critical = Color(red: 0.816, green: 0.231, blue: 0.231)
-    static let warning = Color(red: 0.980, green: 0.698, blue: 0.098)
+    /// Amber that stays readable as text: darker on light backgrounds, the bright status yellow in dark mode.
+    static let warning = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(red: 0.980, green: 0.698, blue: 0.098, alpha: 1)
+            : NSColor(red: 0.604, green: 0.384, blue: 0.0, alpha: 1)
+    })
     static let good = Color(red: 0.047, green: 0.639, blue: 0.047)
     static let exam = Color(red: 0.290, green: 0.227, blue: 0.655)
 
