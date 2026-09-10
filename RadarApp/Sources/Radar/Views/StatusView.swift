@@ -76,6 +76,7 @@ private struct SyncRow: View {
 
 private struct SetupBox: View {
     @Environment(AppState.self) private var state
+    @Environment(\.openSettings) private var openSettings
     let info: StatusInfo?
 
     var body: some View {
@@ -106,7 +107,7 @@ private struct SetupBox: View {
 
     private var buttons: some View {
         HStack {
-            Button("Open Settings…") { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
+            Button("Open Settings…") { openSettings() }
             if let u = state.webURL { Button("Web dashboard") { NSWorkspace.shared.open(u) } }
             if let p = info?.paths["home"] { Button("Show data folder") { NSWorkspace.shared.open(URL(fileURLWithPath: p)) } }
         }

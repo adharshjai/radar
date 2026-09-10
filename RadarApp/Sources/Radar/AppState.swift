@@ -147,7 +147,11 @@ final class AppState {
 
     func loadConfig() async {
         guard let api else { return }
-        if let c = try? await api.get("/api/config", as: ConfigSummary.self) { config = c }
+        do {
+            config = try await api.get("/api/config", as: ConfigSummary.self)
+        } catch {
+            settingsError = "Could not read the configuration: \(error.localizedDescription)"
+        }
     }
 
     func saveConfig(_ patch: [String: Any]) async -> Bool {
@@ -155,9 +159,10 @@ final class AppState {
         do {
             _ = try await api.put("/api/config", patch)
             await loadConfig()
+            settingsError = nil
             return true
         } catch {
-            lastError = error.localizedDescription
+            settingsError = error.localizedDescription
             return false
         }
     }

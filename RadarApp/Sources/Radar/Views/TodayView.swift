@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TodayView: View {
     @Environment(AppState.self) private var state
+    @State private var visitTask: Task<Void, Never>?
 
     private var d: Dashboard { state.dashboard }
     private var courseFilter: String? { state.courseFilter }
@@ -23,7 +24,11 @@ struct TodayView: View {
         }
     }
     private var agendaDays: [AgendaDay] {
-        courseFilter == nil ? d.agenda : d.agenda.map { AgendaDay(date: $0.date, label: $0.label, sub: $0.sub, items: f($0.items)) }
+        d.agenda.map { day in
+            var seen = Set<String>()
+            let items = f(day.items).filter { seen.insert($0.uid).inserted }
+            return AgendaDay(date: day.date, label: day.label, sub: day.sub, items: items)
+        }
     }
 
     var body: some View {
@@ -59,6 +64,7 @@ struct TodayView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle("Today")
         .onAppear { scheduleVisited() }
+        .onDisappear { visitTask?.cancel(); visitTask = nil }
     }
 
     private var header: some View {
@@ -130,6 +136,7 @@ struct TodayView: View {
     }
 
     private func scheduleVisited() {
-        Task { try? await Task.sleep(for: .seconds(45)); state.visited() }
+        visitTask?.cancel()
+        visitTask = Task { try? await Task.sleep(for: .seconds(45)); if !Task.isCancelled { state.visited() } }
     }
 }

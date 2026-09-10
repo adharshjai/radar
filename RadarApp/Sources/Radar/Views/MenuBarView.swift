@@ -3,6 +3,7 @@ import SwiftUI
 struct MenuBarView: View {
     @Environment(AppState.self) private var state
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         let d = state.dashboard
@@ -31,11 +32,8 @@ struct MenuBarView: View {
             }
             Divider()
             HStack {
-                Button("Open Radar") {
-                    NSApp.activate(ignoringOtherApps: true)
-                    if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.identifier?.rawValue.hasPrefix("main") == true }) { w.makeKeyAndOrderFront(nil) }
-                    else { openWindow(id: "main") }
-                }
+                Button("Open Radar") { openWindow(id: "main"); NSApp.activate() }
+                Button("Settings…") { openSettings(); NSApp.activate() }
                 Button(state.syncing ? "Syncing…" : "Sync now") { state.sync() }.disabled(state.syncing || state.isDemo)
                 Spacer()
                 Text(state.isDemo ? "demo" : (d.last_sync.map { Fmt.relative($0) } ?? "")).font(.caption).foregroundStyle(.secondary)

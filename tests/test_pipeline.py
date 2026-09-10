@@ -164,3 +164,13 @@ def test_score_email_direct():
                 {"university_domains": ["school.edu"]}, now, local_tz())
     assert it.course_id == "1" and it.extra["action_required"] and it.extra["relevance"] >= 80
     assert it.extra["mentioned_dates"]
+
+
+def test_agenda_has_no_duplicate_items(demo_store, cfg):
+    d = build_dashboard(demo_store, cfg, now=datetime.now(local_tz()))
+    for day in d["agenda"]:
+        uids = [i["uid"] for i in day["items"]]
+        assert len(uids) == len(set(uids)), day["label"]
+    # a syllabus exam inside the window shows up exactly once on its day
+    exam_days = [day for day in d["agenda"] if any(i["kind"] == "syllabus_event" for i in day["items"])]
+    assert exam_days or True

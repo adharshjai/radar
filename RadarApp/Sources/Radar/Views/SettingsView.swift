@@ -96,15 +96,17 @@ struct CanvasSettings: View {
             }
         }
         .formStyle(.grouped)
-        .task {
-            await state.loadConfig()
-            if let c = state.config?.canvas, !loaded {
-                baseURL = c.base_url ?? ""; browser = c.browser ?? ""; icsURL = c.ics_url ?? ""
-                feeds = (c.announcement_feeds ?? []).joined(separator: ", ")
-                if c.has_token == true { method = "token" }
-                loaded = true
-            }
+        .task { await state.loadConfig() }
+        .onChange(of: state.config, initial: true) { _, cfg in
+            guard let c = cfg?.canvas, !loaded else { return }        // populate until the user starts editing
+            baseURL = c.base_url ?? ""; browser = c.browser ?? ""; icsURL = c.ics_url ?? ""
+            feeds = (c.announcement_feeds ?? []).joined(separator: ", ")
+            if c.has_token == true { method = "token" }
+            loaded = !(c.base_url ?? "").isEmpty
         }
+        .onChange(of: baseURL) { _, _ in loaded = true }
+        .onChange(of: icsURL) { _, _ in loaded = true }
+        .onChange(of: feeds) { _, _ in loaded = true }
     }
 
     private func connect() {
@@ -173,11 +175,12 @@ struct EmailSettings: View {
         .task {
             await state.loadConfig()
             await state.resumeOutlookLoginIfPending()
-            if let c = state.config, !loaded {
-                appleMail = c.applemail.enabled ?? false; appleAccount = c.applemail.account ?? ""
-                clientID = c.outlook.client_id ?? ""; tenant = c.outlook.tenant ?? "organizations"
-                loaded = true
-            }
+        }
+        .onChange(of: state.config, initial: true) { _, cfg in
+            guard let c = cfg, !loaded else { return }
+            appleMail = c.applemail.enabled ?? false; appleAccount = c.applemail.account ?? ""
+            clientID = c.outlook.client_id ?? ""; tenant = c.outlook.tenant ?? "organizations"
+            loaded = true
         }
     }
 }
@@ -210,9 +213,10 @@ struct AISettings: View {
             }
         }
         .formStyle(.grouped)
-        .task {
-            await state.loadConfig()
-            if let a = state.config?.ai, !loaded { enabled = a.enabled ?? true; model = a.model ?? "claude-opus-5"; loaded = true }
+        .task { await state.loadConfig() }
+        .onChange(of: state.config, initial: true) { _, cfg in
+            guard let a = cfg?.ai, !loaded else { return }
+            enabled = a.enabled ?? true; model = a.model ?? "claude-opus-5"; loaded = true
         }
     }
 }
@@ -245,9 +249,10 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
-        .task {
-            await state.loadConfig()
-            if let s = state.config?.server, !loaded { interval = s.sync_every_minutes ?? 30; loaded = true }
+        .task { await state.loadConfig() }
+        .onChange(of: state.config, initial: true) { _, cfg in
+            guard let s = cfg?.server, !loaded else { return }
+            interval = s.sync_every_minutes ?? 30; loaded = true
         }
     }
 }

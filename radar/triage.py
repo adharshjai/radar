@@ -401,6 +401,7 @@ def build_dashboard(store, cfg: dict, now: datetime | None = None, tz=None) -> d
     graded = [g[1] for g in graded[:15]]
 
     agenda: dict = {}
+    agenda_seen: set = set()
     horizon = today + timedelta(days=7)
     for it in items:
         ex = it.get("extra") or {}
@@ -412,13 +413,15 @@ def build_dashboard(store, cfg: dict, now: datetime | None = None, tz=None) -> d
         if not when:
             continue
         d = when.astimezone(tz).date()
-        if today <= d <= horizon:
+        if today <= d <= horizon and (d, it["uid"]) not in agenda_seen:
             agenda.setdefault(d, []).append(it)
+            agenda_seen.add((d, it["uid"]))
     for t in active:
         if t.get("due_at"):
             d = t["due_at"].astimezone(tz).date()
-            if today <= d <= horizon:
+            if today <= d <= horizon and (d, t["uid"]) not in agenda_seen:
                 agenda.setdefault(d, []).append(t)
+                agenda_seen.add((d, t["uid"]))
     agenda_days = []
     for i in range(8):
         d = today + timedelta(days=i)

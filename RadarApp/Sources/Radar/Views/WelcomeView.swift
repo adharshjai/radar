@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct WelcomeView: View {
+    @Environment(\.openSettings) private var openSettings
     var body: some View {
         VStack(spacing: 18) {
             Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 56)).foregroundStyle(Color.accentColor)
@@ -14,9 +15,9 @@ struct WelcomeView: View {
             }
             .padding(.top, 6)
             Button {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                openSettings()
             } label: { Label("Open Settings", systemImage: "gearshape").padding(.horizontal, 8) }
-            .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(",", modifiers: .command)
+            .buttonStyle(.borderedProminent).controlSize(.large)
             Text("Everything stays on this Mac. Radar only ever reads.").font(.caption).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
