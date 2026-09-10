@@ -301,8 +301,8 @@ def run_sync(cfg: dict | None = None, store: Store | None = None, sources: list[
     return results
 
 
-def notify_new(store: Store, cfg: dict, now: datetime) -> list[dict]:
-    """Send one macOS notification about newly discovered urgent items."""
+def pending_notifications(store: Store, cfg: dict, now: datetime) -> list[dict]:
+    """Newly discovered urgent items that have not been announced yet (does not mark them)."""
     dash = build_dashboard(store, cfg, now=now.astimezone(local_tz()))
     fresh = []
     for bucket in ("overdue", "today", "tomorrow"):
@@ -314,6 +314,12 @@ def notify_new(store: Store, cfg: dict, now: datetime) -> list[dict]:
             if it["kind"] == "email" and not ((it.get("ai") or {}).get("action_required") or (it.get("extra") or {}).get("action_required")):
                 continue
             fresh.append(it)
+    return fresh
+
+
+def notify_new(store: Store, cfg: dict, now: datetime) -> list[dict]:
+    """Send one macOS notification about newly discovered urgent items (CLI / web mode)."""
+    fresh = pending_notifications(store, cfg, now)
     if fresh:
         first = fresh[0]
         more = f" (+{len(fresh) - 1} more)" if len(fresh) > 1 else ""

@@ -20,7 +20,23 @@ a **New since your last look** feed, per-course pages with a syllabus digest, a 
 external platforms, and a plain-text daily brief. Mark things done, snooze them, add notes, add your own tasks.
 A macOS notification fires when a sync discovers something new and urgent.
 
-## Quick start
+## The Mac app
+
+`Radar.app` is a native SwiftUI app (macOS 26+) with a sidebar, menu bar item, Dock badge, native notifications,
+a Settings window that connects Canvas and Outlook without touching a terminal, and launch-at-login. The Python
+engine below ships inside the bundle (`Contents/Resources/engine`), so the app needs no Python install.
+
+```bash
+./scripts/build_app.sh          # PyInstaller engine + swift build -> dist/Radar.app  (~3 min first time)
+open dist/Radar.app             # or: RADAR_DEMO=1 open dist/Radar.app  for sample data
+```
+
+Requirements to build: macOS 26, Xcode Command Line Tools (Swift 6.2), Python 3.11+ with `pip install -r requirements.txt pyinstaller`.
+Drag `dist/Radar.app` to /Applications. The app is ad-hoc signed; on first launch macOS may ask you to confirm opening it.
+To hack on the app itself, `cd RadarApp && swift build && .build/debug/Radar` runs it against the checked-out
+engine (`python3 -m radar`) instead of the bundled one.
+
+## Quick start (engine on its own)
 
 ```bash
 cd ~/Claude/radar
@@ -168,14 +184,16 @@ Environment overrides: `CANVAS_BASE_URL`, `CANVAS_TOKEN`, `RADAR_HOME` (data dir
 ## Files
 
 ```
-radar/            package
+RadarApp/         native SwiftUI Mac app (Package.swift; Sources/Radar)
+scripts/          build_app.sh · radar-engine.spec (PyInstaller) · make_icon.py · Info.plist
+radar/            engine package
   cli.py          commands
   sync.py         orchestration: sources → store → enrichment → notify
   sources/        canvas.py · outlook.py · applemail.py · platforms.py
   syllabus.py     syllabus text → dated items          dates.py  date/time extraction
   mailrules.py    email relevance/action heuristics    enrich/ai.py  Claude calls (structured outputs)
   triage.py       buckets, priority, dedupe            brief.py  text brief
-  web.py          Flask app · templates/ · static/
+  web.py          Flask app · templates/ · static/   api.py  JSON API used by the Mac app
 demo/fixtures.py  realistic sample Canvas + Outlook payloads (also used by the tests)
 tests/            pytest suite (python3 -m pytest)
 ```

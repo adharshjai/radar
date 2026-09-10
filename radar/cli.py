@@ -256,13 +256,21 @@ def cmd_today(args):
 def cmd_serve(args):
     from .web import serve
     cfg = cfgmod.load()
-    serve(cfg, _store(), port=args.port, open_browser=not args.no_open)
+    serve(cfg, _store(), port=args.port, open_browser=not args.no_open, app_mode=getattr(args, "app_mode", False))
 
 
 def cmd_demo(args):
     """Load realistic sample data into a throwaway database and open the dashboard."""
     from demo.fixtures import load_demo
-    demo_home = Path(os.environ.get("RADAR_DEMO_HOME", Path(__file__).resolve().parent.parent / "demo" / "home"))
+    import tempfile
+    if os.environ.get("RADAR_DEMO_HOME"):
+        demo_home = Path(os.environ["RADAR_DEMO_HOME"])
+    elif os.environ.get("RADAR_HOME"):
+        demo_home = Path(os.environ["RADAR_HOME"]) / "demo"        # never wipe a real data folder
+    elif getattr(sys, "frozen", False):
+        demo_home = Path(tempfile.gettempdir()) / "radar-demo"
+    else:
+        demo_home = Path(__file__).resolve().parent.parent / "demo" / "home"
     os.environ["RADAR_HOME"] = str(demo_home)
     if demo_home.exists() and not args.keep:
         shutil.rmtree(demo_home)
@@ -277,7 +285,7 @@ def cmd_demo(args):
         cmd_today(argparse.Namespace(ai=False))
         return
     from .web import serve
-    serve(cfg, store, port=args.port, open_browser=not args.no_open, demo=True)
+    serve(cfg, store, port=args.port, open_browser=not args.no_open, demo=True, app_mode=getattr(args, "app_mode", False))
 
 
 def cmd_install_schedule(args):
@@ -353,12 +361,14 @@ def main(argv=None):
     v = sub.add_parser("serve", help="run the dashboard (auto-syncs in the background)")
     v.add_argument("--port", type=int)
     v.add_argument("--no-open", action="store_true")
+    v.add_argument("--app-mode", action="store_true", help="used by the Mac app: JSON API only, token-guarded, no osascript notifications")
     v.set_defaults(fn=cmd_serve)
     d = sub.add_parser("demo", help="dashboard with sample data (no accounts needed)")
     d.add_argument("--port", type=int, default=5152)
     d.add_argument("--no-open", action="store_true")
     d.add_argument("--keep", action="store_true", help="keep existing demo state")
     d.add_argument("--brief", action="store_true", help="print the text brief instead of serving")
+    d.add_argument("--app-mode", action="store_true")
     d.set_defaults(fn=cmd_demo)
     i = sub.add_parser("install-schedule", help="start at login + auto-sync (launchd)")
     i.add_argument("--with-key", action="store_true", help="bake the current ANTHROPIC_API_KEY into the launch agent")

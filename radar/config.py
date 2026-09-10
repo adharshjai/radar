@@ -58,6 +58,7 @@ DEFAULTS: dict = {
     "ai": {
         "enabled": True,
         "model": "claude-opus-5",
+        "api_key": "",              # optional; otherwise ANTHROPIC_API_KEY / `ant auth login` is used
         "max_items_per_sync": 80,
     },
     "profile": {

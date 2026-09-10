@@ -12,3 +12,4 @@ RadarApp/.swiftpm/
 engine-build/
 *.spec.bak
 .DS_Store
+engine-build.log

@@ -117,7 +117,8 @@ class Enricher:
     def client(self):
         if self._client is None:
             import anthropic
-            self._client = anthropic.Anthropic()
+            key = (self.cfg.get("api_key") or "").strip() or None
+            self._client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
         return self._client
 
     def _call(self, system: str, user: str, schema: dict, max_tokens: int = 16000) -> dict | None:

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleDisplayName</key><string>Radar</string>
+  <key>CFBundleExecutable</key><string>Radar</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleIdentifier</key><string>com.adharsh.radar</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>Radar</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <key>CFBundleVersion</key><string>__BUILD__</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>LSMinimumSystemVersion</key><string>26.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSHumanReadableCopyright</key><string>© 2026 Adharsh Jaikumar</string>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSSupportsAutomaticTermination</key><false/>
+  <key>NSSupportsSuddenTermination</key><false/>
+  <key>NSAppleEventsUsageDescription</key><string>Radar reads your Outlook mail through Apple Mail only if you choose that option.</string>
+</dict>
+</plist>

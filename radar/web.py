@@ -19,7 +19,54 @@ from .triage import KIND_ICONS, KIND_LABELS, build_dashboard, humanize_ago, huma
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 
 
-def create_app(cfg: dict | None = None, store: Store | None = None, demo: bool = False) -> Flask:
+def sync_problems(store: Store) -> list[dict]:
+    """Recent failed syncs (newer than the last success) with a fix hint."""
+    problems = []
+    for src in ("canvas", "outlook", "applemail", "canvas-feeds"):
+        f = store.last_failure(src)
+        if f and f.get("message") and f["message"] != "not configured":
+            msg = f["message"]
+            fix = None
+            if "session expired" in msg.lower() or "login canvas" in msg or "No Canvas login found" in msg:
+                fix = f"Sign in to Canvas in your browser, then press Sync now (or run:  {cfgmod.CMD} login canvas)"
+            elif src == "outlook" and ("Not signed in" in msg or "rejected the token" in msg):
+                fix = f"Run:  {cfgmod.CMD} login outlook"
+            problems.append({"source": src, "message": msg, "fix": fix, "when": f["finished"]})
+    return problems
+
+
+def course_groups(dash: dict, c: dict, course_id: str):
+    """Item groups + grouped sites for one course page (shared by the HTML view and the JSON API)."""
+    items = [i for i in dash["items"] if str(i.get("course_id")) == str(course_id)]
+    task_ids = {i["uid"] for k in ("overdue", "today", "tomorrow", "week", "later", "nodate") for i in dash["buckets"][k]}
+    groups = {
+        "tasks": [i for i in items if i["uid"] in task_ids],
+        "announcements": sorted([i for i in items if i["kind"] == "announcement"], key=lambda i: i.get("posted_at") or dash["now"], reverse=True),
+        "graded": [i for i in items if i["status"] in ("graded", "submitted", "excused")],
+        "syllabus": [i for i in items if i["kind"] == "syllabus_event" and not (i.get("extra") or {}).get("dup_of")],
+        "files": sorted([i for i in items if i["kind"] == "file"], key=lambda i: i.get("posted_at") or dash["now"], reverse=True)[:20],
+        "other": [i for i in items if i["kind"] in ("event", "module", "discussion", "module_item", "page") and i["uid"] not in task_ids],
+    }
+    groups["tasks"].sort(key=lambda i: (i.get("due_at") or dash["now"] + timedelta(days=999)))
+    groups["graded"].sort(key=lambda i: i.get("due_at") or dash["now"], reverse=True)
+    groups["syllabus"].sort(key=lambda i: i.get("due_at") or i.get("starts_at") or dash["now"])
+    grouped: dict = {}
+    for s in dash["sites"]:
+        if str(s["course_id"]) != str(course_id):
+            continue
+        key = s.get("platform") or s["url"]
+        if key in grouped:
+            grouped[key]["where_found"] += ", " + s["where_found"]
+            if s.get("last_checked_dt") and (not grouped[key].get("last_checked_dt") or s["last_checked_dt"] > grouped[key]["last_checked_dt"]):
+                grouped[key]["last_checked_dt"] = s["last_checked_dt"]
+        else:
+            grouped[key] = dict(s, name=s.get("platform") or s["name"])
+    sites = sorted(grouped.values(), key=lambda s: (s["category"] != "tool", s["name"].lower()))
+    return groups, sites
+
+
+def create_app(cfg: dict | None = None, store: Store | None = None, demo: bool = False, app_mode: bool = False,
+               api_token: str | None = None) -> Flask:
     cfg = cfg or cfgmod.load()
     store = store or Store(cfgmod.db_path())
     app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"),
@@ -27,8 +74,13 @@ def create_app(cfg: dict | None = None, store: Store | None = None, demo: bool =
     app.config["RADAR_CFG"] = cfg
     app.config["RADAR_STORE"] = store
     app.config["RADAR_DEMO"] = demo
+    app.config["RADAR_APP_MODE"] = app_mode
+    app.config["RADAR_API_TOKEN"] = api_token or None
     tz = local_tz()
     state = {"syncing": False, "log": [], "last_result": None, "started": None, "thread": None}
+    app.config["RADAR_SYNC_STATE"] = state
+    from .api import api as api_blueprint
+    app.register_blueprint(api_blueprint)
 
     def course_colors():
         courses = store.courses()
@@ -177,30 +229,7 @@ def create_app(cfg: dict | None = None, store: Store | None = None, demo: bool =
         c = store.course(course_id)
         if not c:
             abort(404)
-        items = [i for i in dash["items"] if str(i.get("course_id")) == str(course_id)]
-        groups = {
-            "tasks": [i for i in items if i in dash["buckets"]["overdue"] + dash["buckets"]["today"] + dash["buckets"]["tomorrow"] + dash["buckets"]["week"] + dash["buckets"]["later"] + dash["buckets"]["nodate"]],
-            "announcements": sorted([i for i in items if i["kind"] == "announcement"], key=lambda i: i.get("posted_at") or dash["now"], reverse=True),
-            "graded": [i for i in items if i["status"] in ("graded", "submitted", "excused")],
-            "syllabus": [i for i in items if i["kind"] == "syllabus_event" and not (i.get("extra") or {}).get("dup_of")],
-            "files": sorted([i for i in items if i["kind"] == "file"], key=lambda i: i.get("posted_at") or dash["now"], reverse=True)[:20],
-            "other": [i for i in items if i["kind"] in ("event", "module", "discussion", "module_item", "page") and i not in dash["buckets"]["overdue"] + dash["buckets"]["today"] + dash["buckets"]["tomorrow"] + dash["buckets"]["week"] + dash["buckets"]["later"] + dash["buckets"]["nodate"]],
-        }
-        groups["tasks"].sort(key=lambda i: (i.get("due_at") or dash["now"] + timedelta(days=999)))
-        groups["graded"].sort(key=lambda i: i.get("due_at") or dash["now"], reverse=True)
-        groups["syllabus"].sort(key=lambda i: i.get("due_at") or i.get("starts_at") or dash["now"])
-        grouped: dict = {}
-        for s in dash["sites"]:
-            if str(s["course_id"]) != str(course_id):
-                continue
-            key = s.get("platform") or s["url"]
-            if key in grouped:
-                grouped[key]["where_found"] += ", " + s["where_found"]
-                if s.get("last_checked_dt") and (not grouped[key].get("last_checked_dt") or s["last_checked_dt"] > grouped[key]["last_checked_dt"]):
-                    grouped[key]["last_checked_dt"] = s["last_checked_dt"]
-            else:
-                grouped[key] = dict(s, name=s.get("platform") or s["name"])
-        sites = sorted(grouped.values(), key=lambda s: (s["category"] != "tool", s["name"].lower()))
+        groups, sites = course_groups(dash, c, course_id)
         return render_template("course.html", d=dash, c=c, g=groups, sites=sites, page="course")
 
     @app.route("/all")
@@ -296,7 +325,8 @@ def create_app(cfg: dict | None = None, store: Store | None = None, demo: bool =
             state["log"].append(f"{datetime.now(tz).strftime('%H:%M:%S')} {msg}")
             print(msg, flush=True)
         try:
-            state["last_result"] = run_sync(cfg, store, sources=sources, log=log, notify=cfg["server"].get("notify", True))
+            state["last_result"] = run_sync(cfg, store, sources=sources, log=log,
+                                            notify=cfg["server"].get("notify", True) and not app_mode)
         except Exception as e:
             state["last_result"] = {"error": str(e)}
             log(traceback.format_exc())
@@ -332,15 +362,32 @@ def create_app(cfg: dict | None = None, store: Store | None = None, demo: bool =
             if not state["syncing"]:
                 _sync_worker()
 
+    @app.before_request
+    def _guard():
+        token = app.config.get("RADAR_API_TOKEN")
+        if not token or request.path.startswith("/api/") or request.path.startswith("/static/"):
+            return None      # /api/* is checked by the blueprint; static files are harmless
+        import secrets as _secrets
+        given = request.headers.get("X-Radar-Token") or request.args.get("token") or request.cookies.get("radar_token")
+        if not _secrets.compare_digest(given or "", token):
+            abort(401)
+
     if not app.config.get("TESTING"):
         threading.Thread(target=scheduler, daemon=True).start()
     return app
 
 
-def serve(cfg: dict | None = None, store: Store | None = None, port: int | None = None, open_browser: bool = True, demo: bool = False):
+def serve(cfg: dict | None = None, store: Store | None = None, port: int | None = None, open_browser: bool = True, demo: bool = False,
+          app_mode: bool = False):
     cfg = cfg or cfgmod.load()
     port = port or int(cfg["server"].get("port", 5151))
-    app = create_app(cfg, store, demo=demo)
+    import os
+    token = os.environ.get("RADAR_API_TOKEN") if app_mode else None
+    app = create_app(cfg, store, demo=demo, app_mode=app_mode, api_token=token)
+    if app_mode:
+        open_browser = False
+        import logging
+        logging.getLogger("werkzeug").setLevel(logging.WARNING)
     url = f"http://127.0.0.1:{port}/"
     if open_browser:
         import webbrowser

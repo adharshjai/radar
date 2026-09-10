@@ -78,6 +78,24 @@ class OutlookSource:
         self._persist()
         return result["access_token"]
 
+    def start_device_flow(self) -> dict:
+        flow = self.app().initiate_device_flow(scopes=SCOPES)
+        if "user_code" not in flow:
+            raise OutlookError(f"Could not start device sign-in: {json.dumps(flow, indent=2)}")
+        return flow
+
+    def finish_device_flow(self, flow: dict) -> str:
+        result = self.app().acquire_token_by_device_flow(flow)
+        if "access_token" not in result:
+            err = result.get("error_description") or result.get("error") or "unknown error"
+            hint = ""
+            if "AADSTS65001" in err or "consent" in err.lower() or "AADSTS7000218" in err or "AADSTS700016" in err:
+                hint = (" Your school tenant did not accept this client_id; ask IT to allow 'Microsoft Graph Command Line Tools' "
+                        "or register your own app and put its client ID in Settings.")
+            raise OutlookError(f"Sign-in failed: {err}{hint}")
+        self._persist()
+        return result["access_token"]
+
     def logout(self):
         app = self.app()
         for a in app.get_accounts():
